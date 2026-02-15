@@ -1,0 +1,19 @@
+{
+  "name": "social-skills",
+  "owner": {
+    "name": "Isaac Rowntree"
+  },
+  "metadata": {
+    "description": "Social media posting skills for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "social-post",
+      "source": "./plugins/social-post",
+      "description": "Post to Twitter/X, Reddit, Facebook, and Instagram from Claude Code",
+      "version": "1.0.0",
+      "keywords": ["social-media", "twitter", "reddit", "facebook", "instagram"],
+      "category": "social-media"
+    }
+  ]
+}

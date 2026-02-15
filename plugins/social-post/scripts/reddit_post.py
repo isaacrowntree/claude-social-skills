@@ -10,17 +10,6 @@ import requests
 USER_AGENT = "claude-social-skills/1.0"
 
 
-def load_env():
-    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
-    if os.path.exists(env_path):
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, value = line.partition("=")
-                    os.environ.setdefault(key.strip(), value.strip())
-
-
 def get_token() -> str:
     resp = requests.post(
         "https://www.reddit.com/api/v1/access_token",
@@ -41,8 +30,6 @@ def get_token() -> str:
 
 
 def submit_post(subreddit: str, title: str, text: str = "", url: str = "") -> dict:
-    load_env()
-
     required = ["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "REDDIT_USERNAME", "REDDIT_PASSWORD"]
     missing = [k for k in required if not os.environ.get(k)]
     if missing:
@@ -82,8 +69,6 @@ def submit_post(subreddit: str, title: str, text: str = "", url: str = "") -> di
 
 def submit_comment(thing_id: str, text: str) -> dict:
     """Comment on a post or reply to a comment. thing_id is t3_xxx (post) or t1_xxx (comment)."""
-    load_env()
-
     required = ["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "REDDIT_USERNAME", "REDDIT_PASSWORD"]
     missing = [k for k in required if not os.environ.get(k)]
     if missing:

@@ -14,20 +14,7 @@ import requests
 GRAPH_API = "https://graph.facebook.com/v22.0"
 
 
-def load_env():
-    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
-    if os.path.exists(env_path):
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, value = line.partition("=")
-                    os.environ.setdefault(key.strip(), value.strip())
-
-
 def post_image(image_url: str, caption: str = "") -> dict:
-    load_env()
-
     required = ["IG_USER_ID", "IG_ACCESS_TOKEN"]
     missing = [k for k in required if not os.environ.get(k)]
     if missing:
@@ -83,8 +70,6 @@ def post_image(image_url: str, caption: str = "") -> dict:
 
 
 def post_reel(video_url: str, caption: str = "") -> dict:
-    load_env()
-
     required = ["IG_USER_ID", "IG_ACCESS_TOKEN"]
     missing = [k for k in required if not os.environ.get(k)]
     if missing:

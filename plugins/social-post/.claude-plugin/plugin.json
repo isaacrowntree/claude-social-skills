@@ -1,0 +1,11 @@
+{
+  "name": "social-post",
+  "description": "Post to Twitter/X, Reddit, Facebook, and Instagram from Claude Code",
+  "version": "1.0.0",
+  "author": {
+    "name": "Isaac Rowntree"
+  },
+  "repository": "https://github.com/isaacrowntree/claude-social-skills",
+  "license": "MIT",
+  "keywords": ["social-media", "twitter", "reddit", "facebook", "instagram"]
+}

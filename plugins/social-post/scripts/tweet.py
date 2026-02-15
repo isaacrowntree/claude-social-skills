@@ -8,21 +8,7 @@ import sys
 from requests_oauthlib import OAuth1Session
 
 
-def load_env():
-    """Load .env file from repo root if env vars not already set."""
-    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
-    if os.path.exists(env_path):
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, value = line.partition("=")
-                    os.environ.setdefault(key.strip(), value.strip())
-
-
 def tweet(text: str, reply_to: str | None = None) -> dict:
-    load_env()
-
     required = [
         "TWITTER_API_KEY",
         "TWITTER_API_SECRET",
@@ -32,7 +18,7 @@ def tweet(text: str, reply_to: str | None = None) -> dict:
     missing = [k for k in required if not os.environ.get(k)]
     if missing:
         print(f"Missing env vars: {', '.join(missing)}", file=sys.stderr)
-        print("Copy .env.example to .env and fill in your credentials.", file=sys.stderr)
+        print("Export these env vars in your shell or .zshrc.", file=sys.stderr)
         sys.exit(1)
 
     oauth = OAuth1Session(

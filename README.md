@@ -1,26 +1,48 @@
 # claude-social-skills
 
-Claude Code skill for posting to Twitter/X, Reddit, Facebook, and Instagram from the terminal.
+Claude Code plugin marketplace for posting to Twitter/X, Reddit, Facebook, and Instagram.
 
-No MCP servers. Just Python scripts + a skill file that teaches Claude how to use them.
+No MCP servers. Just Python scripts + a skill that teaches Claude how to use them.
 
 ## Install
 
-```bash
-git clone https://github.com/YOUR_USERNAME/claude-social-skills.git ~/src/claude-social-skills
-cd ~/src/claude-social-skills
-./install.sh
+In Claude Code:
+
+```
+/plugin marketplace add isaacrowntree/claude-social-skills
+/plugin install social-post@social-skills
 ```
 
-This installs Python dependencies (`requests`, `requests-oauthlib`) and symlinks the skill into `~/.claude/skills/`.
+Then install the Python dependencies (Claude will prompt you on first use, or run manually):
+
+```bash
+pip install requests requests-oauthlib
+```
 
 ## Setup credentials
 
-Copy `.env.example` to `.env` and fill in credentials for the platforms you want:
+Export environment variables for the platforms you want to use:
 
 ```bash
-cp .env.example .env
-# edit .env with your credentials
+# Twitter/X
+export TWITTER_API_KEY=...
+export TWITTER_API_SECRET=...
+export TWITTER_ACCESS_TOKEN=...
+export TWITTER_ACCESS_TOKEN_SECRET=...
+
+# Reddit
+export REDDIT_CLIENT_ID=...
+export REDDIT_CLIENT_SECRET=...
+export REDDIT_USERNAME=...
+export REDDIT_PASSWORD=...
+
+# Facebook
+export FB_PAGE_ID=...
+export FB_ACCESS_TOKEN=...
+
+# Instagram
+export IG_USER_ID=...
+export IG_ACCESS_TOKEN=...
 ```
 
 | Platform | Where to get credentials | Account type |
@@ -32,32 +54,34 @@ cp .env.example .env
 
 ## Usage
 
-In Claude Code, use `/social-post` or just ask naturally:
+In Claude Code, use `/social-post:social-post` or just ask naturally:
 
 ```
-> /social-post tweet "Just shipped a new feature!"
+> /social-post:social-post tweet "Just shipped a new feature!"
 > Post this to Reddit r/programming: "Check out this tool..."
 > Share on Twitter and Reddit: "Big announcement..."
 ```
 
-## Direct script usage
+## Repo structure
 
-You can also call the scripts directly:
-
-```bash
-# Twitter
-python3 scripts/tweet.py "Hello world"
-
-# Reddit
-python3 scripts/reddit_post.py post programming "My title" --text "Post body"
-python3 scripts/reddit_post.py comment t3_abc123 "Nice post!"
-
-# Facebook
-python3 scripts/fb_post.py "Page update" --link "https://example.com"
-
-# Instagram (image must be a public URL)
-python3 scripts/ig_post.py image "https://example.com/photo.jpg" --caption "Caption"
-python3 scripts/ig_post.py reel "https://example.com/video.mp4" --caption "Reel caption"
+```
+claude-social-skills/
+├── .claude-plugin/
+│   └── marketplace.json           # Marketplace catalog
+└── plugins/
+    └── social-post/
+        ├── .claude-plugin/
+        │   └── plugin.json        # Plugin manifest
+        ├── skills/
+        │   └── social-post/
+        │       └── SKILL.md       # Skill instructions
+        ├── scripts/
+        │   ├── tweet.py           # Twitter/X (OAuth 1.0a)
+        │   ├── reddit_post.py     # Reddit (OAuth2)
+        │   ├── fb_post.py         # Facebook Pages (Graph API)
+        │   └── ig_post.py         # Instagram Business (Graph API)
+        ├── requirements.txt
+        └── .env.example
 ```
 
 ## Platform limitations
