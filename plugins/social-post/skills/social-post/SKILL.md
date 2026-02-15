@@ -48,6 +48,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/reddit_post.py" comment <thing_id> "Comme
 
 - Requires: `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`, `REDDIT_PASSWORD`
 - Create a "script" type app at https://www.reddit.com/prefs/apps
+- **2FA must be disabled** on the Reddit account — password grant does not support 2FA
 - Note: Reddit restricted new API key creation in Nov 2025. Existing keys still work.
 
 ## Facebook

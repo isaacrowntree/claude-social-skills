@@ -11,7 +11,7 @@ import time
 
 import requests
 
-GRAPH_API = "https://graph.facebook.com/v22.0"
+GRAPH_API = "https://graph.facebook.com/v24.0"
 
 
 def post_image(image_url: str, caption: str = "") -> dict:

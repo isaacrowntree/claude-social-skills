@@ -7,7 +7,7 @@ import sys
 
 import requests
 
-GRAPH_API = "https://graph.facebook.com/v22.0"
+GRAPH_API = "https://graph.facebook.com/v24.0"
 
 
 def post_to_page(message: str, link: str = "") -> dict:
