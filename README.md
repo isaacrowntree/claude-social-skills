@@ -98,6 +98,8 @@ python3 scripts/ig_post.py reel "https://example.com/video.mp4" --caption "Reel 
 
 ## ebay-listing
 
+List items for sale on eBay. Supports fixed-price and auction listings with local image upload, product photo cleanup, and multiple marketplaces.
+
 ### Dependencies
 
 ```bash
@@ -112,6 +114,10 @@ export EBAY_CLIENT_ID=...
 export EBAY_CLIENT_SECRET=...
 export EBAY_RUNAME=...
 ```
+
+| Where to get credentials | Notes |
+|-------------------------|-------|
+| [eBay Developer Program](https://developer.ebay.com) | Free API access, no fees |
 
 ### Setup
 
@@ -132,37 +138,88 @@ Set `EBAY_SANDBOX=true` to test against eBay's sandbox environment.
 
 ```
 > List my GoPro on eBay for $299, condition is like new
+> Create a draft eBay listing for this camera with these photos
+> Clean up my product photos in this folder
 ```
 
 ### Direct script usage
 
 ```bash
+# Create a listing
 python3 scripts/ebay_list.py list \
   --title "GoPro Hero 12 Black" \
   --description "Brand new, sealed in box." \
   --price 299.99 \
   --condition NEW \
   --image "https://example.com/photo.jpg" \
-  --marketplace US
+  --marketplace US \
+  --currency USD
 
 # Photo cleanup (auto white balance, contrast, sharpening)
 python3 scripts/photo_cleanup.py <directory|file>
 ```
 
+### Listing options
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--title` | Yes | Item title (max 80 chars) |
+| `--description` | Yes | Item description (max 4000 chars) |
+| `--price` | Yes | Listing price |
+| `--condition` | Yes | NEW, LIKE_NEW, USED_EXCELLENT, USED_VERY_GOOD, USED_GOOD, FOR_PARTS_OR_NOT_WORKING, etc. |
+| `--image` | Yes | HTTPS image URL (repeatable for multiple images) |
+| `--category` | No | eBay category ID |
+| `--marketplace` | No | US (default), UK, AU, CA, DE, FR, IT, ES |
+| `--currency` | No | USD (default), GBP, AUD, CAD, EUR |
+| `--format` | No | FIXED_PRICE (default) or AUCTION |
+| `--quantity` | No | Number available (default: 1) |
+| `--sku` | No | Custom SKU (auto-generated if omitted) |
+| `--brand` | No | Brand name |
+| `--draft` | No | Create offer without publishing (for review) |
+
 ### Platform notes
 
 - Free API access. OAuth browser consent required once, then auto-refreshes for ~18 months.
 - Supports fixed-price and auction listings.
+- Includes `photo_cleanup.py` for auto white balance, contrast, brightness, and sharpening of product photos.
+- Also supports Auth'n'Auth (Trading API) as an alternative to OAuth — auto-detects based on env vars.
 
 ## himalaya-email
 
-Requires [himalaya](https://github.com/pimalaya/himalaya) CLI installed and configured.
+Read, send, and manage email from Claude Code using the [himalaya](https://github.com/pimalaya/himalaya) CLI. No scripts needed — this plugin teaches Claude how to use the himalaya commands directly.
+
+### Prerequisites
+
+1. Install himalaya (v1.2.0+):
+   ```bash
+   brew install himalaya
+   ```
+2. Configure your email account in `~/.config/himalaya/config.toml` (or `~/Library/Application Support/himalaya/config.toml` on macOS). See the [himalaya docs](https://github.com/pimalaya/himalaya) for config examples.
+
+### Features
+
+- List and read emails from any folder (INBOX, Sent, Drafts, etc.)
+- Send emails and reply to threads with proper threading headers
+- Trace email origins — inspect SPF, DKIM, DMARC, and Received headers
+- Preview mode (`-p` flag) to read without marking as seen
+- Gmail folder alias support (Sent Mail, Drafts, Bin, Spam)
+- JSON output for programmatic use
+
+### Usage
 
 ```
 > Check my inbox
 > Read the latest email from GitHub
 > Reply to that email saying thanks
+> Where did this email actually come from? Check the headers
+> Show me emails in my Sent folder
 ```
+
+### Platform notes
+
+- Works with any IMAP/SMTP email provider (Gmail, Outlook, Fastmail, etc.)
+- Gmail users: set `message.send.save-copy = false` in config to avoid duplicate sent messages.
+- No API keys needed — uses standard IMAP/SMTP with app passwords.
 
 ## Repo structure
 
