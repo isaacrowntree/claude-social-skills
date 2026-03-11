@@ -1,0 +1,11 @@
+{
+  "name": "ebay-listing",
+  "description": "List items for sale on eBay from Claude Code",
+  "version": "1.0.0",
+  "author": {
+    "name": "Isaac Rowntree"
+  },
+  "repository": "https://github.com/isaacrowntree/claude-social-skills",
+  "license": "MIT",
+  "keywords": ["ebay", "listing", "selling", "marketplace", "e-commerce"]
+}

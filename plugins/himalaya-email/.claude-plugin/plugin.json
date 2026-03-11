@@ -1,0 +1,11 @@
+{
+  "name": "himalaya-email",
+  "description": "Read, send, and manage email from Claude Code using the Himalaya CLI",
+  "version": "1.0.0",
+  "author": {
+    "name": "Isaac Rowntree"
+  },
+  "repository": "https://github.com/isaacrowntree/claude-social-skills",
+  "license": "MIT",
+  "keywords": ["email", "himalaya", "gmail", "imap", "smtp"]
+}

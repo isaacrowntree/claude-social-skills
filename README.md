@@ -1,8 +1,16 @@
 # claude-social-skills
 
-Claude Code plugin marketplace for posting to Twitter/X, Reddit, Facebook, Instagram, and eBay.
+Claude Code plugin marketplace for social media, email, and e-commerce.
 
-No MCP servers. Just Python scripts + a skill that teaches Claude how to use them.
+No MCP servers. Just scripts + skills that teach Claude how to use them.
+
+## Plugins
+
+| Plugin | Description |
+|--------|-------------|
+| **social-post** | Post to Twitter/X, Reddit, Facebook, and Instagram |
+| **ebay-listing** | List items for sale on eBay |
+| **himalaya-email** | Read, send, and manage email using the Himalaya CLI |
 
 ## Install
 
@@ -11,15 +19,19 @@ In Claude Code:
 ```
 /plugin marketplace add isaacrowntree/claude-social-skills
 /plugin install social-post@social-skills
+/plugin install ebay-listing@social-skills
+/plugin install himalaya-email@social-skills
 ```
 
-Then install the Python dependencies (Claude will prompt you on first use, or run manually):
+## social-post
+
+### Dependencies
 
 ```bash
 pip install requests requests-oauthlib
 ```
 
-## Setup credentials
+### Credentials
 
 Export environment variables for the platforms you want to use:
 
@@ -43,11 +55,6 @@ export FB_ACCESS_TOKEN=...
 # Instagram
 export IG_USER_ID=...
 export IG_ACCESS_TOKEN=...
-
-# eBay
-export EBAY_CLIENT_ID=...
-export EBAY_CLIENT_SECRET=...
-export EBAY_RUNAME=...
 ```
 
 | Platform | Where to get credentials | Account type |
@@ -56,35 +63,15 @@ export EBAY_RUNAME=...
 | **Reddit** | [App Preferences](https://www.reddit.com/prefs/apps) — create "script" type | Any (2FA must be disabled) |
 | **Facebook** | [Graph API Explorer](https://developers.facebook.com/tools/explorer/) | Page (not personal) |
 | **Instagram** | Same as Facebook, linked IG account | Business/Creator only |
-| **eBay** | [Developer Program](https://developer.ebay.com) | Any eBay account |
 
-### eBay setup
-
-eBay uses OAuth 2.0 with browser-based consent, which is different from the other platforms:
-
-1. Create an app at [developer.ebay.com](https://developer.ebay.com) to get your client ID and secret
-2. Create a RuName with redirect URL set to `http://localhost:8888/callback`
-3. Export `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_RUNAME`
-4. Run the auth flow (opens browser, you log in, tokens are saved automatically):
-   ```bash
-   python3 plugins/social-post/scripts/ebay_list.py auth
-   ```
-5. Tokens are saved to `~/.ebay_tokens.json` — access token refreshes automatically
-
-Set `EBAY_SANDBOX=true` to test against eBay's sandbox environment.
-
-## Usage
-
-In Claude Code, use `/social-post:social-post` or just ask naturally:
+### Usage
 
 ```
-> /social-post:social-post tweet "Just shipped a new feature!"
 > Post this to Reddit r/programming: "Check out this tool..."
 > Share on Twitter and Reddit: "Big announcement..."
-> List my GoPro on eBay for $299, condition is like new
 ```
 
-## Direct script usage
+### Direct script usage
 
 ```bash
 # Twitter
@@ -100,8 +87,56 @@ python3 scripts/fb_post.py "Page update" --link "https://example.com"
 # Instagram (image must be a public URL)
 python3 scripts/ig_post.py image "https://example.com/photo.jpg" --caption "Caption"
 python3 scripts/ig_post.py reel "https://example.com/video.mp4" --caption "Reel caption"
+```
 
-# eBay (requires auth first: ebay_list.py auth)
+### Platform limitations
+
+- **Twitter**: Free tier allows ~50 posts/month. OAuth 1.0a required for posting.
+- **Reddit**: API key self-service was restricted Nov 2025. Existing keys still work. 2FA must be disabled.
+- **Facebook**: Page posting only (no personal profiles via API). 200 calls/hour.
+- **Instagram**: Business accounts only. Must be linked to a Facebook Page. Images must be publicly hosted JPEG URLs. 25 posts/day max.
+
+## ebay-listing
+
+### Dependencies
+
+```bash
+pip install requests Pillow
+```
+
+### Credentials
+
+```bash
+# eBay — https://developer.ebay.com
+export EBAY_CLIENT_ID=...
+export EBAY_CLIENT_SECRET=...
+export EBAY_RUNAME=...
+```
+
+### Setup
+
+eBay uses OAuth 2.0 with browser-based consent:
+
+1. Create an app at [developer.ebay.com](https://developer.ebay.com) to get your client ID and secret
+2. Create a RuName with redirect URL set to `http://localhost:8888/callback`
+3. Export `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_RUNAME`
+4. Run the auth flow (opens browser, you log in, tokens are saved automatically):
+   ```bash
+   python3 plugins/ebay-listing/scripts/ebay_list.py auth
+   ```
+5. Tokens are saved to `~/.ebay_tokens.json` — access token refreshes automatically
+
+Set `EBAY_SANDBOX=true` to test against eBay's sandbox environment.
+
+### Usage
+
+```
+> List my GoPro on eBay for $299, condition is like new
+```
+
+### Direct script usage
+
+```bash
 python3 scripts/ebay_list.py list \
   --title "GoPro Hero 12 Black" \
   --description "Brand new, sealed in box." \
@@ -109,6 +144,24 @@ python3 scripts/ebay_list.py list \
   --condition NEW \
   --image "https://example.com/photo.jpg" \
   --marketplace US
+
+# Photo cleanup (auto white balance, contrast, sharpening)
+python3 scripts/photo_cleanup.py <directory|file>
+```
+
+### Platform notes
+
+- Free API access. OAuth browser consent required once, then auto-refreshes for ~18 months.
+- Supports fixed-price and auction listings.
+
+## himalaya-email
+
+Requires [himalaya](https://github.com/pimalaya/himalaya) CLI installed and configured.
+
+```
+> Check my inbox
+> Read the latest email from GitHub
+> Reply to that email saying thanks
 ```
 
 ## Repo structure
@@ -118,29 +171,39 @@ claude-social-skills/
 ├── .claude-plugin/
 │   └── marketplace.json           # Marketplace catalog
 └── plugins/
-    └── social-post/
+    ├── social-post/
+    │   ├── .claude-plugin/
+    │   │   └── plugin.json        # Plugin manifest
+    │   ├── skills/
+    │   │   └── social-post/
+    │   │       └── SKILL.md       # Skill instructions
+    │   ├── scripts/
+    │   │   ├── tweet.py           # Twitter/X (OAuth 1.0a)
+    │   │   ├── reddit_post.py     # Reddit (OAuth2)
+    │   │   ├── fb_post.py         # Facebook Pages (Graph API v24.0)
+    │   │   └── ig_post.py         # Instagram Business (Graph API v24.0)
+    │   ├── requirements.txt
+    │   └── .env.example
+    ├── ebay-listing/
+    │   ├── .claude-plugin/
+    │   │   └── plugin.json        # Plugin manifest
+    │   ├── skills/
+    │   │   └── ebay-listing/
+    │   │       └── SKILL.md       # Skill instructions
+    │   ├── scripts/
+    │   │   ├── ebay_list.py       # eBay (Trading API + Inventory API)
+    │   │   └── photo_cleanup.py   # Product photo auto-cleanup
+    │   ├── tests/
+    │   │   └── test_ebay_list.py
+    │   ├── requirements.txt
+    │   └── .env.example
+    └── himalaya-email/
         ├── .claude-plugin/
         │   └── plugin.json        # Plugin manifest
-        ├── skills/
-        │   └── social-post/
-        │       └── SKILL.md       # Skill instructions
-        ├── scripts/
-        │   ├── tweet.py           # Twitter/X (OAuth 1.0a)
-        │   ├── reddit_post.py     # Reddit (OAuth2)
-        │   ├── fb_post.py         # Facebook Pages (Graph API v24.0)
-        │   ├── ig_post.py         # Instagram Business (Graph API v24.0)
-        │   └── ebay_list.py       # eBay (Inventory API, OAuth 2.0)
-        ├── requirements.txt
-        └── .env.example
+        └── skills/
+            └── himalaya-email/
+                └── SKILL.md       # Skill instructions (uses himalaya CLI)
 ```
-
-## Platform limitations
-
-- **Twitter**: Free tier allows ~50 posts/month. OAuth 1.0a required for posting.
-- **Reddit**: API key self-service was restricted Nov 2025. Existing keys still work. 2FA must be disabled.
-- **Facebook**: Page posting only (no personal profiles via API). 200 calls/hour.
-- **Instagram**: Business accounts only. Must be linked to a Facebook Page. Images must be publicly hosted JPEG URLs. 25 posts/day max.
-- **eBay**: Free API access. OAuth browser consent required once, then auto-refreshes for ~18 months. Supports fixed-price and auction listings.
 
 ## License
 

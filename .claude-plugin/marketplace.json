@@ -4,7 +4,7 @@
     "name": "Isaac Rowntree"
   },
   "metadata": {
-    "description": "Social media posting skills for Claude Code"
+    "description": "Social media, e-commerce, and communication plugins for Claude Code"
   },
   "plugins": [
     {
@@ -14,6 +14,22 @@
       "version": "1.0.0",
       "keywords": ["social-media", "twitter", "reddit", "facebook", "instagram"],
       "category": "social-media"
+    },
+    {
+      "name": "ebay-listing",
+      "source": "./plugins/ebay-listing",
+      "description": "List items for sale on eBay from Claude Code",
+      "version": "1.0.0",
+      "keywords": ["ebay", "listing", "selling", "marketplace", "e-commerce"],
+      "category": "e-commerce"
+    },
+    {
+      "name": "himalaya-email",
+      "source": "./plugins/himalaya-email",
+      "description": "Read, send, and manage email from Claude Code using the Himalaya CLI",
+      "version": "1.0.0",
+      "keywords": ["email", "himalaya", "gmail", "imap", "smtp"],
+      "category": "communication"
     }
   ]
 }
