@@ -17,15 +17,30 @@ pip install -r "${CLAUDE_PLUGIN_ROOT}/requirements.txt"
 
 Credentials must be set as environment variables. The user needs to create a `.env` file or export them in their shell (see Requirements below).
 
-## First-time eBay auth
+## Authentication
 
-eBay uses OAuth 2.0 with browser-based consent. The user must authenticate once:
+The script supports two auth methods and auto-detects based on which env vars are set:
+
+### Auth'n'Auth (recommended)
+
+Simpler for personal use. Get a token from the eBay Developer Portal:
+User Tokens tab > Auth'n'Auth > Sign in to Production.
+
+- Requires: `EBAY_AUTH_TOKEN` env var
+- Token lasts ~18 months
+- Uses the Trading API (XML)
+
+### OAuth 2.0 (alternative)
+
+Browser-based consent flow. More complex — requires a localhost callback server which can be finicky.
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ebay_list.py" auth
 ```
 
-This opens a browser, the user logs in to eBay, and the script captures the token automatically via a local callback server on port 8888. Tokens are saved to `~/.ebay_tokens.json` (access token: 2 hours, refresh token: ~18 months, auto-refreshes).
+- Requires: `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_RUNAME` env vars
+- RuName redirect URL must be `http://localhost:8888/callback`
+- Uses the Inventory API (REST)
 
 ## Creating a listing
 
@@ -70,19 +85,9 @@ Saves processed images alongside originals with `_clean` suffix. Requires `Pillo
 
 ## Requirements
 
-- `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_RUNAME` env vars
-- Set up at https://developer.ebay.com
-- RuName redirect URL must be set to `http://localhost:8888/callback`
+- Set up at https://developer.ebay.com (free, no API fees)
+- Either `EBAY_AUTH_TOKEN` (Auth'n'Auth) or `EBAY_CLIENT_ID` + `EBAY_CLIENT_SECRET` + `EBAY_RUNAME` (OAuth)
 - Set `EBAY_SANDBOX=true` to use sandbox environment for testing
-- Free to use, no API fees
-
-## Token refresh
-
-```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ebay_list.py" refresh
-```
-
-Tokens auto-refresh when expired, but you can manually refresh if needed.
 
 ## Error handling
 

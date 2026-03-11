@@ -106,33 +106,19 @@ List items for sale on eBay. Supports fixed-price and auction listings with loca
 pip install requests Pillow
 ```
 
-### Credentials
-
-```bash
-# eBay — https://developer.ebay.com
-export EBAY_CLIENT_ID=...
-export EBAY_CLIENT_SECRET=...
-export EBAY_RUNAME=...
-```
-
-| Where to get credentials | Notes |
-|-------------------------|-------|
-| [eBay Developer Program](https://developer.ebay.com) | Free API access, no fees |
-
 ### Setup
 
-eBay uses OAuth 2.0 with browser-based consent:
-
-1. Create an app at [developer.ebay.com](https://developer.ebay.com) to get your client ID and secret
-2. Create a RuName with redirect URL set to `http://localhost:8888/callback`
-3. Export `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_RUNAME`
-4. Run the auth flow (opens browser, you log in, tokens are saved automatically):
+1. Create an app at [developer.ebay.com](https://developer.ebay.com) (free, no API fees)
+2. Go to the **User Tokens** tab > **Auth'n'Auth** > **Sign in to Production**
+3. Sign in with your eBay account to generate a token
+4. Export it:
    ```bash
-   python3 plugins/ebay-listing/scripts/ebay_list.py auth
+   export EBAY_AUTH_TOKEN=<your-token>
    ```
-5. Tokens are saved to `~/.ebay_tokens.json` — access token refreshes automatically
 
-Set `EBAY_SANDBOX=true` to test against eBay's sandbox environment.
+That's it. The token lasts ~18 months and the script uses eBay's Trading API (XML) with it.
+
+> **Why Auth'n'Auth?** The OAuth 2.0 alternative requires a browser-based redirect flow that's finicky on localhost. Auth'n'Auth is simpler for personal use — one token, no callback server. The script supports both methods and auto-detects based on which env vars are set.
 
 ### Usage
 
@@ -179,10 +165,10 @@ python3 scripts/photo_cleanup.py <directory|file>
 
 ### Platform notes
 
-- Free API access. OAuth browser consent required once, then auto-refreshes for ~18 months.
+- Free API access, no fees. Auth'n'Auth token lasts ~18 months.
 - Supports fixed-price and auction listings.
 - Includes `photo_cleanup.py` for auto white balance, contrast, brightness, and sharpening of product photos.
-- Also supports Auth'n'Auth (Trading API) as an alternative to OAuth — auto-detects based on env vars.
+- Also supports OAuth 2.0 (Inventory API) if you set `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_RUNAME` instead — auto-detects based on which env vars are present.
 
 ## himalaya-email
 
