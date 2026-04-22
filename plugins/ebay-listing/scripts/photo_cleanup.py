@@ -8,6 +8,15 @@ import os
 import sys
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
+# Register HEIC/HEIF support so the eBay Tether's iPhone captures load directly.
+# eBay's upload API rejects HEIC, so we always emit JPEG regardless of input.
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+    _HEIC_OK = True
+except ImportError:
+    _HEIC_OK = False
+
 
 def auto_white_balance(img: Image.Image) -> Image.Image:
     """Gray world white balance correction."""
@@ -30,6 +39,11 @@ def auto_white_balance(img: Image.Image) -> Image.Image:
 
 def cleanup_image(input_path: str, output_path: str):
     """Apply auto-corrections to a product photo."""
+    if input_path.lower().endswith((".heic", ".heif")) and not _HEIC_OK:
+        raise RuntimeError(
+            f"HEIC input detected but pillow-heif not installed. "
+            f"Run: pip install pillow-heif"
+        )
     img = Image.open(input_path).convert("RGB")
 
     # 1. Auto white balance
@@ -61,7 +75,7 @@ def main():
     for arg in sys.argv[1:]:
         if os.path.isdir(arg):
             for f in sorted(os.listdir(arg)):
-                if f.lower().endswith((".jpg", ".jpeg", ".png")) and "_clean" not in f:
+                if f.lower().endswith((".jpg", ".jpeg", ".png", ".heic", ".heif")) and "_clean" not in f:
                     paths.append(os.path.join(arg, f))
         elif os.path.isfile(arg):
             paths.append(arg)
@@ -72,8 +86,9 @@ def main():
 
     print(f"Processing {len(paths)} images...")
     for path in paths:
-        name, ext = os.path.splitext(path)
-        output = f"{name}_clean{ext}"
+        name, _ext = os.path.splitext(path)
+        # Always emit .jpg — eBay rejects HEIC, and JPEG is the universal fit.
+        output = f"{name}_clean.jpg"
         cleanup_image(path, output)
 
     print("Done!")
