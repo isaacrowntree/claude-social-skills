@@ -85,26 +85,27 @@ Saves processed images alongside originals with a `_clean.jpg` suffix. Accepts
 JPEG, PNG, and **HEIC/HEIF** input (iPhone-native format); output is always
 JPEG because eBay's upload API rejects HEIC. Requires `Pillow` and `pillow-heif`.
 
-## Tethered iPhone workflow (eBay Tether)
+## Tethered phone workflow (Shutterdrop)
 
-If the user is using the **eBay Tether** iPhone app (in `~/src/personal/ebay-tether/`),
-captures drop into `~/Pictures/ebay-staging/` as HEIC. Recommended flow:
+If the user is using **Shutterdrop** (https://github.com/isaacrowntree/shutterdrop),
+phone captures drop into `~/Pictures/Shutterdrop/` as HEIC (iOS) or JPEG (Android).
+Recommended flow:
 
 ```bash
 # 1. Clean + convert the new captures to JPEG
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/photo_cleanup.py" ~/Pictures/ebay-staging/
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/photo_cleanup.py" ~/Pictures/Shutterdrop/
 
 # 2. List using the _clean.jpg outputs (pass one --image per photo)
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ebay_list.py" list \
   --title "…" --price … --condition … \
-  --image ~/Pictures/ebay-staging/1745...heic_clean.jpg \
-  --image ~/Pictures/ebay-staging/1745...heic_clean.jpg
+  --image ~/Pictures/Shutterdrop/1745...heic_clean.jpg \
+  --image ~/Pictures/Shutterdrop/1745...heic_clean.jpg
 ```
 
 `ebay_list.py` auto-uploads local files via `UploadSiteHostedPictures` when
 Auth'n'Auth is set (see `resolve_images`), so you don't need to host the
 images yourself. After a successful listing, move the used files out of
-`~/Pictures/ebay-staging/` so the next shoot starts clean.
+`~/Pictures/Shutterdrop/` so the next shoot starts clean.
 
 ## Requirements
 
