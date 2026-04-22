@@ -1161,9 +1161,13 @@ def revise_fixed_price_item(
     price: float | None = None,
     title: str = "",
     description: str = "",
+    best_offer: bool | None = None,
     best_offer_min: float | None = None,
     best_offer_auto_accept: float | None = None,
+    free_shipping: bool | None = None,
+    shipping_service: str = "AU_StandardDelivery",
     currency: str = "AUD",
+    category_id: str = "",
 ) -> str:
     """Revise an existing fixed-price listing via Trading API."""
     fields = ""
@@ -1173,6 +1177,10 @@ def revise_fixed_price_item(
         fields += f"\n    <Title>{_escape_xml(title)}</Title>"
     if description:
         fields += f"\n    <Description><![CDATA[{description}]]></Description>"
+    if category_id:
+        fields += f"\n    <PrimaryCategory><CategoryID>{_escape_xml(category_id)}</CategoryID></PrimaryCategory>"
+    if best_offer is not None:
+        fields += f'\n    <BestOfferDetails><BestOfferEnabled>{"true" if best_offer else "false"}</BestOfferEnabled></BestOfferDetails>'
     if best_offer_min is not None or best_offer_auto_accept is not None:
         fields += "\n    <ListingDetails>"
         if best_offer_auto_accept is not None:
@@ -1180,6 +1188,16 @@ def revise_fixed_price_item(
         if best_offer_min is not None:
             fields += f'\n      <MinimumBestOfferPrice currencyID="{_escape_xml(currency)}">{best_offer_min}</MinimumBestOfferPrice>'
         fields += "\n    </ListingDetails>"
+    if free_shipping is not None:
+        fields += f"""
+    <ShippingDetails>
+      <ShippingType>Flat</ShippingType>
+      <ShippingServiceOptions>
+        <ShippingService>{_escape_xml(shipping_service)}</ShippingService>
+        <ShippingServicePriority>1</ShippingServicePriority>
+        <FreeShipping>{"true" if free_shipping else "false"}</FreeShipping>
+      </ShippingServiceOptions>
+    </ShippingDetails>"""
 
     body = f"""
   <Item>
@@ -1360,6 +1378,8 @@ examples:
     sub.add_parser("dashboard", help="Show all active/sold listings with prices and metrics")
     msg_p = sub.add_parser("messages", help="Show recent eBay messages")
     msg_p.add_argument("--days", type=int, default=14, help="Number of days to look back (default: 14)")
+    msg_p.add_argument("--read", type=int, metavar="N", help="Show full body of the Nth message (1-based)")
+    msg_p.add_argument("--filter", type=str, metavar="KEYWORD", help="Filter messages by keyword in subject")
 
     cat_p = sub.add_parser("categories", help="Search for eBay category IDs (built-in)")
     cat_p.add_argument("query", nargs="+", help="Keywords to search (e.g. 'gimbal stabilizer')")
@@ -1491,11 +1511,13 @@ examples:
                     active_ids.append(m.group(1))
 
         # Fetch full details for each active item
-        print("=" * 90)
-        print(f"{'ACTIVE LISTINGS':^90}")
-        print("=" * 90)
-        print(f"{'Title':<42} {'Price':>8}  {'Watch':>5}  {'Offers':>6}  {'BestOffer':>9}")
-        print("-" * 90)
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        print("=" * 100)
+        print(f"{'ACTIVE LISTINGS':^100}")
+        print("=" * 100)
+        print(f"{'Title':<42} {'Price':>8}  {'Watch':>5}  {'Offers':>6}  {'BestOffer':>9}  {'Listed':>8}")
+        print("-" * 100)
         for item_id in active_ids:
             item_body = f"<ItemID>{item_id}</ItemID><DetailLevel>ReturnAll</DetailLevel>"
             try:
@@ -1507,7 +1529,23 @@ examples:
                 bo_count = _extract_xml_value(item_result, "BestOfferCount") or "0"
                 bo_on = _extract_xml_value(item_result, "BestOfferEnabled")
                 bo_str = "on" if bo_on == "true" else "off"
-                print(f"  {title[:40]:<40} A${price:>7}  {watchers:>5}  {bo_count:>6}  {bo_str:>9}")
+                start_time = _extract_xml_value(item_result, "StartTime")
+                age_str = ""
+                if start_time:
+                    try:
+                        start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                        days = (now - start_dt).days
+                        if days < 1:
+                            age_str = "<1d"
+                        elif days < 30:
+                            age_str = f"{days}d"
+                        elif days < 365:
+                            age_str = f"{days // 30}mo"
+                        else:
+                            age_str = f"{days // 365}y {(days % 365) // 30}mo"
+                    except (ValueError, TypeError):
+                        age_str = "?"
+                print(f"  {title[:40]:<40} A${price:>7}  {watchers:>5}  {bo_count:>6}  {bo_str:>9}  {age_str:>8}")
             except EbayApiError:
                 print(f"  #{item_id} — error fetching details")
 
@@ -1539,6 +1577,7 @@ examples:
             sys.exit(1)
 
         from datetime import datetime, timedelta, timezone
+        import html as html_mod
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=args.days)
         body = f"""
@@ -1549,6 +1588,7 @@ examples:
         result = trading_api_call("GetMyMessages", body, auth_token, sandbox, "15")
 
         msgs = []
+        msg_ids = []
         for block in re.finditer(r"<Message>(.*?)</Message>", result, re.DOTALL):
             c = block.group(1)
             sender = _extract_xml_value(c, "Sender")
@@ -1556,14 +1596,62 @@ examples:
             date = _extract_xml_value(c, "ReceiveDate")[:10]
             read = _extract_xml_value(c, "Read")
             item_title = _extract_xml_value(c, "ItemTitle")
+            msg_id = _extract_xml_value(c, "MessageID")
             marker = "  " if read == "true" else "* "
+            if args.filter and args.filter.lower() not in subject.lower():
+                continue
             msgs.append((date, marker, sender, subject[:70], item_title))
+            msg_ids.append(msg_id)
 
-        if msgs:
+        if args.read:
+            idx = args.read - 1
+            if idx < 0 or idx >= len(msgs):
+                print(f"Message {args.read} out of range (1-{len(msgs)}).", file=sys.stderr)
+                sys.exit(1)
+            mid = msg_ids[idx]
+            detail_body = f"""
+  <MessageIDs><MessageID>{mid}</MessageID></MessageIDs>
+  <DetailLevel>ReturnMessages</DetailLevel>"""
+            detail_result = trading_api_call("GetMyMessages", detail_body, auth_token, sandbox, "15")
+            detail_block = re.search(r"<Message>(.*?)</Message>", detail_result, re.DOTALL)
+            if detail_block:
+                c = detail_block.group(1)
+                sender = _extract_xml_value(c, "Sender")
+                subject = _extract_xml_value(c, "Subject")
+                date = _extract_xml_value(c, "ReceiveDate")
+                text = _extract_xml_value(c, "Text")
+                # Strip CDATA wrapper if present
+                cdata = re.search(r"<!\[CDATA\[(.*?)\]\]>", text, re.DOTALL)
+                if cdata:
+                    text = cdata.group(1)
+                text = html_mod.unescape(text)
+                # Try to extract the user's actual message from eBay HTML
+                user_text_match = re.search(r'id="UserInputtedText"[^>]*>(.*?)</div>', text, re.DOTALL)
+                if user_text_match:
+                    text = user_text_match.group(1)
+                # Strip style/script blocks, then HTML tags, then decode entities
+                text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+                text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
+                text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+                text = re.sub(r"<[^>]+>", " ", text)
+                text = html_mod.unescape(text)
+                # Clean up invisible Unicode chars and excessive whitespace
+                text = re.sub(r"[\u200b-\u200f\u2028-\u202f\u00ad]+", "", text)
+                text = re.sub(r"[ \t]+", " ", text)
+                text = re.sub(r"\n\s*\n+", "\n", text)
+                text = text.strip()
+                print(f"From: {sender}")
+                print(f"Date: {date}")
+                print(f"Subject: {subject}")
+                print("-" * 90)
+                print(text)
+            else:
+                print("Could not retrieve message body.")
+        elif msgs:
             print(f"Messages (last {args.days} days)  (* = unread)")
             print("-" * 90)
-            for date, marker, sender, subject, item_title in msgs:
-                print(f"{marker}{date}  {sender:<20} {subject}")
+            for i, (date, marker, sender, subject, item_title) in enumerate(msgs, 1):
+                print(f"{i:>2}. {marker}{date}  {sender:<20} {subject}")
         else:
             print("No messages.")
 
