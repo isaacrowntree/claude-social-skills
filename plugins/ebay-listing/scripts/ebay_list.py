@@ -1351,6 +1351,99 @@ def validate_leaf_category(
     return True, ""  # Not found — don't block
 
 
+# --- Best Offers ---
+
+
+def get_best_offers(
+    auth_token: str,
+    item_id: str = "",
+    sandbox: bool = False,
+    site_id: str = "15",
+    status: str = "Active",
+) -> list[dict]:
+    """Fetch Best Offers via the Trading API GetBestOffers call.
+
+    If item_id is empty, returns offers across all of the seller's listings.
+    Returns a list of dicts: item_id, item_title, best_offer_id, buyer, price,
+    currency, quantity, status, message, expires.
+    """
+    body = ""
+    if item_id:
+        body += f"  <ItemID>{_escape_xml(item_id)}</ItemID>\n"
+    if status and status.lower() != "all":
+        body += f"  <BestOfferStatus>{_escape_xml(status)}</BestOfferStatus>\n"
+    body += "  <DetailLevel>ReturnAll</DetailLevel>"
+
+    result = trading_api_call("GetBestOffers", body, auth_token, sandbox, site_id)
+
+    ack = _extract_xml_value(result, "Ack")
+    if ack not in ("Success", "Warning"):
+        error = _extract_xml_value(result, "LongMessage") or _extract_xml_value(result, "ShortMessage")
+        raise EbayApiError(f"GetBestOffers failed: {error or 'unknown error'}")
+
+    offers = []
+    for grp in re.finditer(r"<ItemBestOffers>(.*?)</ItemBestOffers>", result, re.DOTALL):
+        block = grp.group(1)
+        grp_item_id = _extract_xml_value(block, "ItemID")
+        grp_title = _extract_xml_value(block, "Title")
+        for bo in re.finditer(r"<BestOffer>(.*?)</BestOffer>", block, re.DOTALL):
+            c = bo.group(1)
+            price_m = re.search(r'<Price[^>]*currencyID="([^"]*)"[^>]*>([\d.]+)</Price>', c)
+            offers.append({
+                "item_id": grp_item_id,
+                "item_title": grp_title,
+                "best_offer_id": _extract_xml_value(c, "BestOfferID"),
+                "buyer": _extract_xml_value(c, "UserID"),
+                "currency": price_m.group(1) if price_m else "",
+                "price": price_m.group(2) if price_m else "",
+                "quantity": _extract_xml_value(c, "Quantity"),
+                "status": _extract_xml_value(c, "Status") or _extract_xml_value(c, "BestOfferStatus"),
+                "message": _extract_xml_value(c, "BuyerMessage"),
+                "expires": _extract_xml_value(c, "ExpirationTime"),
+            })
+    return offers
+
+
+def respond_to_best_offer(
+    item_id: str,
+    best_offer_id: str,
+    action: str,
+    auth_token: str,
+    sandbox: bool = False,
+    site_id: str = "15",
+    counter_price: float = None,
+    counter_currency: str = "AUD",
+    counter_quantity: int = 1,
+    seller_message: str = "",
+) -> dict:
+    """Respond to a Best Offer via RespondToBestOffer. action: accept | decline | counter.
+
+    Accepting or countering creates a binding commitment to sell — callers should
+    confirm with the user first.
+    """
+    action = action.capitalize()
+    if action not in ("Accept", "Decline", "Counter"):
+        raise EbayApiError(f"Invalid action '{action}' (use accept, decline, or counter)")
+
+    body = f"  <ItemID>{_escape_xml(item_id)}</ItemID>\n"
+    body += f"  <BestOfferID>{_escape_xml(best_offer_id)}</BestOfferID>\n"
+    body += f"  <Action>{action}</Action>\n"
+    if seller_message:
+        body += f"  <SellerResponse>{_escape_xml(seller_message)}</SellerResponse>\n"
+    if action == "Counter":
+        if counter_price is None:
+            raise EbayApiError("Counter action requires counter_price")
+        body += f'  <CounterOfferPrice currencyID="{counter_currency}">{counter_price:.2f}</CounterOfferPrice>\n'
+        body += f"  <CounterOfferQuantity>{counter_quantity}</CounterOfferQuantity>"
+
+    result = trading_api_call("RespondToBestOffer", body.rstrip(), auth_token, sandbox, site_id)
+    ack = _extract_xml_value(result, "Ack")
+    if ack not in ("Success", "Warning"):
+        error = _extract_xml_value(result, "LongMessage") or _extract_xml_value(result, "ShortMessage")
+        raise EbayApiError(f"RespondToBestOffer failed: {error or 'unknown error'}")
+    return {"ack": ack}
+
+
 # --- CLI ---
 
 
@@ -1380,6 +1473,20 @@ examples:
     msg_p.add_argument("--days", type=int, default=14, help="Number of days to look back (default: 14)")
     msg_p.add_argument("--read", type=int, metavar="N", help="Show full body of the Nth message (1-based)")
     msg_p.add_argument("--filter", type=str, metavar="KEYWORD", help="Filter messages by keyword in subject")
+
+    offers_p = sub.add_parser("offers", help="List pending Best Offers on your listings")
+    offers_p.add_argument("--item", default="", help="Filter to a single item ID (default: all listings)")
+    offers_p.add_argument("--marketplace", default="AU", choices=MARKETPLACES.keys(), help="Marketplace (default: AU)")
+    offers_p.add_argument("--status", default="Active", help="Offer status: Active or All (default: Active)")
+
+    respond_p = sub.add_parser("respond", help="Respond to a Best Offer (accept/decline/counter)")
+    respond_p.add_argument("--item", required=True, help="Item ID the offer is on")
+    respond_p.add_argument("--action", required=True, choices=["accept", "decline", "counter"], help="How to respond")
+    respond_p.add_argument("--offer-id", default="", help="Best Offer ID (auto-detected if the item has a single active offer)")
+    respond_p.add_argument("--counter", type=float, default=None, help="Counter offer price (required for --action counter)")
+    respond_p.add_argument("--message", default="", help="Message to send the buyer")
+    respond_p.add_argument("--marketplace", default="AU", choices=MARKETPLACES.keys(), help="Marketplace (default: AU)")
+    respond_p.add_argument("--yes", action="store_true", help="Skip the confirmation prompt (binding action)")
 
     cat_p = sub.add_parser("categories", help="Search for eBay category IDs (built-in)")
     cat_p.add_argument("query", nargs="+", help="Keywords to search (e.g. 'gimbal stabilizer')")
@@ -1654,6 +1761,105 @@ examples:
                 print(f"{i:>2}. {marker}{date}  {sender:<20} {subject}")
         else:
             print("No messages.")
+
+    # --- offers: list pending Best Offers ---
+
+    elif args.command == "offers":
+        auth_token = env.get("auth_token", "")
+        if not auth_token:
+            print("offers requires Auth'n'Auth token.", file=sys.stderr)
+            sys.exit(1)
+        site_id = SITE_ID_MAP.get(args.marketplace, "15")
+        try:
+            offers = get_best_offers(auth_token, args.item, sandbox, site_id, args.status)
+        except EbayApiError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        if not offers:
+            print("No pending Best Offers.")
+        else:
+            print(f"Pending Best Offers ({len(offers)}):")
+            print("-" * 90)
+            for o in offers:
+                print(f"  Item #{o['item_id']}  {o['item_title'][:50]}")
+                print(f"    Offer: {o['currency']} ${o['price']}  x{o['quantity'] or '1'}  from {o['buyer']}  [{o['status']}]")
+                if o["message"]:
+                    print(f"    Message: {o['message']}")
+                if o["expires"]:
+                    print(f"    Expires: {o['expires']}")
+                print(f"    BestOfferID: {o['best_offer_id']}  (respond with: respond --item {o['item_id']} --offer-id {o['best_offer_id']} --action accept)")
+                print()
+
+    # --- respond: accept/decline/counter a Best Offer ---
+
+    elif args.command == "respond":
+        auth_token = env.get("auth_token", "")
+        if not auth_token:
+            print("respond requires Auth'n'Auth token.", file=sys.stderr)
+            sys.exit(1)
+        site_id = SITE_ID_MAP.get(args.marketplace, "15")
+        if args.action == "counter" and args.counter is None:
+            print("--counter PRICE is required for a counter offer.", file=sys.stderr)
+            sys.exit(1)
+
+        # Look up active offers on the item to resolve the offer ID + currency
+        try:
+            offers = get_best_offers(auth_token, args.item, sandbox, site_id, "Active")
+        except EbayApiError as e:
+            print(f"Error fetching offers: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        offer_id = args.offer_id
+        target = None
+        if offer_id:
+            target = next((o for o in offers if o["best_offer_id"] == offer_id), None)
+        elif len(offers) == 1:
+            target = offers[0]
+            offer_id = target["best_offer_id"]
+        elif not offers:
+            print(f"No active offers found on item #{args.item}.", file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f"Multiple active offers on item #{args.item} — specify --offer-id:", file=sys.stderr)
+            for o in offers:
+                print(f"  {o['best_offer_id']}  {o['currency']} ${o['price']} from {o['buyer']}", file=sys.stderr)
+            sys.exit(1)
+
+        currency = (target["currency"] if target else "") or "AUD"
+        action_desc = {
+            "accept": "ACCEPT",
+            "decline": "DECLINE",
+            "counter": f"COUNTER at {currency} ${args.counter:.2f}" if args.counter is not None else "COUNTER",
+        }[args.action]
+        print(f"About to {action_desc} offer {offer_id} on item #{args.item}")
+        if target:
+            print(f"  Buyer {target['buyer']} offered {target['currency']} ${target['price']}")
+
+        if not args.yes:
+            try:
+                confirm = input("Proceed? This is binding. [y/N] ").strip().lower()
+            except EOFError:
+                confirm = ""
+            if confirm not in ("y", "yes"):
+                print("Cancelled.")
+                sys.exit(0)
+
+        try:
+            respond_to_best_offer(
+                item_id=args.item,
+                best_offer_id=offer_id,
+                action=args.action,
+                auth_token=auth_token,
+                sandbox=sandbox,
+                site_id=site_id,
+                counter_price=args.counter,
+                counter_currency=currency,
+                seller_message=args.message,
+            )
+        except EbayApiError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Done — {action_desc} sent.")
 
     # --- find-category: live eBay API category search ---
 

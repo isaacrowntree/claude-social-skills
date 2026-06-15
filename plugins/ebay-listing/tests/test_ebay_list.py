@@ -429,6 +429,112 @@ class TestTradingApiCall:
             assert mock_post.call_args[1]["headers"]["X-EBAY-API-SITEID"] == "15"
 
 
+class TestGetBestOffers:
+    FAKE_XML = """<GetBestOffersResponse><Ack>Success</Ack>
+        <ItemBestOffersArray>
+          <ItemBestOffers>
+            <Item><ItemID>287375355202</ItemID><Title>Polk Audio PSW111 Subwoofer</Title></Item>
+            <BestOfferArray>
+              <BestOffer>
+                <BestOfferID>9988776655</BestOfferID>
+                <Buyer><UserID>2230val</UserID></Buyer>
+                <Price currencyID="AUD">152.00</Price>
+                <Quantity>1</Quantity>
+                <Status>Active</Status>
+                <BuyerMessage>Would you take this?</BuyerMessage>
+                <ExpirationTime>2026-06-15T13:26:16.000Z</ExpirationTime>
+              </BestOffer>
+            </BestOfferArray>
+          </ItemBestOffers>
+        </ItemBestOffersArray>
+    </GetBestOffersResponse>"""
+
+    def test_parses_offer(self):
+        with patch.object(ebay_list, "trading_api_call", return_value=self.FAKE_XML):
+            offers = ebay_list.get_best_offers("tok", "287375355202", site_id="15")
+        assert len(offers) == 1
+        o = offers[0]
+        assert o["best_offer_id"] == "9988776655"
+        assert o["buyer"] == "2230val"
+        assert o["price"] == "152.00"
+        assert o["currency"] == "AUD"
+        assert o["status"] == "Active"
+        assert o["item_title"] == "Polk Audio PSW111 Subwoofer"
+        assert o["message"] == "Would you take this?"
+
+    def test_empty(self):
+        empty = "<GetBestOffersResponse><Ack>Success</Ack></GetBestOffersResponse>"
+        with patch.object(ebay_list, "trading_api_call", return_value=empty):
+            assert ebay_list.get_best_offers("tok") == []
+
+    def test_failure_raises(self):
+        fail = "<GetBestOffersResponse><Ack>Failure</Ack><Errors><LongMessage>Bad item</LongMessage></Errors></GetBestOffersResponse>"
+        with patch.object(ebay_list, "trading_api_call", return_value=fail):
+            with pytest.raises(ebay_list.EbayApiError, match="Bad item"):
+                ebay_list.get_best_offers("tok", "123")
+
+    def test_item_id_included_in_request(self):
+        captured = {}
+
+        def fake_call(call_name, body, *a, **k):
+            captured["call"] = call_name
+            captured["body"] = body
+            return self.FAKE_XML
+
+        with patch.object(ebay_list, "trading_api_call", side_effect=fake_call):
+            ebay_list.get_best_offers("tok", "287375355202")
+        assert captured["call"] == "GetBestOffers"
+        assert "<ItemID>287375355202</ItemID>" in captured["body"]
+        assert "<BestOfferStatus>Active</BestOfferStatus>" in captured["body"]
+
+
+class TestRespondToBestOffer:
+    def _capture(self, action, **kwargs):
+        captured = {}
+
+        def fake_call(call_name, body, *a, **k):
+            captured["call"] = call_name
+            captured["body"] = body
+            return "<RespondToBestOfferResponse><Ack>Success</Ack></RespondToBestOfferResponse>"
+
+        with patch.object(ebay_list, "trading_api_call", side_effect=fake_call):
+            ebay_list.respond_to_best_offer("123", "456", action, "tok", **kwargs)
+        return captured
+
+    def test_accept(self):
+        c = self._capture("accept")
+        assert c["call"] == "RespondToBestOffer"
+        assert "<ItemID>123</ItemID>" in c["body"]
+        assert "<BestOfferID>456</BestOfferID>" in c["body"]
+        assert "<Action>Accept</Action>" in c["body"]
+        assert "CounterOfferPrice" not in c["body"]
+
+    def test_decline_with_message(self):
+        c = self._capture("decline", seller_message="No thanks")
+        assert "<Action>Decline</Action>" in c["body"]
+        assert "<SellerResponse>No thanks</SellerResponse>" in c["body"]
+
+    def test_counter_includes_price(self):
+        c = self._capture("counter", counter_price=160.0, counter_currency="AUD")
+        assert "<Action>Counter</Action>" in c["body"]
+        assert '<CounterOfferPrice currencyID="AUD">160.00</CounterOfferPrice>' in c["body"]
+        assert "<CounterOfferQuantity>1</CounterOfferQuantity>" in c["body"]
+
+    def test_counter_without_price_raises(self):
+        with pytest.raises(ebay_list.EbayApiError, match="counter_price"):
+            self._capture("counter")
+
+    def test_invalid_action_raises(self):
+        with pytest.raises(ebay_list.EbayApiError, match="Invalid action"):
+            ebay_list.respond_to_best_offer("123", "456", "bogus", "tok")
+
+    def test_api_failure_raises(self):
+        fail = "<RespondToBestOfferResponse><Ack>Failure</Ack><Errors><ShortMessage>Offer expired</ShortMessage></Errors></RespondToBestOfferResponse>"
+        with patch.object(ebay_list, "trading_api_call", return_value=fail):
+            with pytest.raises(ebay_list.EbayApiError, match="Offer expired"):
+                ebay_list.respond_to_best_offer("123", "456", "accept", "tok")
+
+
 class TestFindCategoriesOnline:
     def test_keyword_filter(self):
         fake_xml = """<GetCategoriesResponse><Ack>Success</Ack>
