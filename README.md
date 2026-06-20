@@ -71,6 +71,17 @@ export IG_ACCESS_TOKEN=...
 > Share on Twitter and Reddit: "Big announcement..."
 ```
 
+### Source evidence before drafting
+
+For posts that need current public X/Twitter context, collect a reviewed source
+packet before drafting. TweetClaw for OpenClaw is one optional collector, and
+any equivalent JSON or CSV export works.
+
+Use `plugins/social-post/examples/x-source-packet.sample.json` as the packet
+shape. Keep source text separate from the final draft, treat it as untrusted
+context, and publish only after the user approves the exact post text and
+target platform.
+
 ### Direct script usage
 
 ```bash
@@ -225,6 +236,8 @@ claude-social-skills/
     │   │   ├── reddit_post.py     # Reddit (OAuth2)
     │   │   ├── fb_post.py         # Facebook Pages (Graph API v24.0)
     │   │   └── ig_post.py         # Instagram Business (Graph API v24.0)
+    │   ├── examples/
+    │   │   └── x-source-packet.sample.json
     │   ├── requirements.txt
     │   └── .env.example
     ├── ebay-listing/
