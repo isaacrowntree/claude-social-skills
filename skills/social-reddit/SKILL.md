@@ -13,8 +13,6 @@ Reddit: post, comment, delete, inbox, home feed and subreddit listings, plus any
 
 - `REDDIT_CLIENT_ID`
 - `REDDIT_CLIENT_SECRET`
-- `REDDIT_USERNAME`
-- `REDDIT_PASSWORD`
 
 Create an app at https://www.reddit.com/prefs/apps (type "script" for the password grant, or "web app" with redirect uri http://localhost:8765/callback for `social auth login reddit`). Reddit also requires access approval since Nov 2025: https://support.reddithelp.com/hc/en-us/requests/new REDDIT_USERNAME/REDDIT_PASSWORD are only needed for the script (password) grant.
 

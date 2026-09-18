@@ -109,7 +109,9 @@ async function login(): Promise<void> {
   note(`Opening the browser for Reddit authorisation (the app's redirect uri must be ${REDIRECT_URI}).\n${url}`)
   Bun.spawn(["open", url])
   try {
-    const c = await Promise.race([code, Bun.sleep(180_000).then(() => { throw new Error("timed out waiting for the Reddit callback") })])
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error("timed out waiting for the Reddit callback")), 180_000) })
+    const c = await Promise.race([code, timeout]).finally(() => clearTimeout(timer))
     const t = await tokenRequest({ grant_type: "authorization_code", code: c, redirect_uri: REDIRECT_URI }, "authorization_code")
     const me = await (await http()).request<any>({ path: "api/v1/me" })
     config.writeState({ reddit_tokens: { ...t, username: me.name } })
@@ -133,7 +135,7 @@ export const reddit: Platform = {
   name: "reddit",
   summary: "Reddit: post, comment, delete, inbox, home feed and subreddit listings, plus any Data API path",
   spec: { kind: "none", source: "https://www.reddit.com/dev/api (HTML only; no OpenAPI)" },
-  credentials: { keys: [...APP_KEYS, ...SCRIPT_KEYS], hint: APP_HINT + " REDDIT_USERNAME/REDDIT_PASSWORD are only needed for the script (password) grant.", docsUrl: "https://www.reddit.com/dev/api" },
+  credentials: { keys: APP_KEYS, optionalKeys: SCRIPT_KEYS, minimal: [APP_KEYS], hint: APP_HINT + " REDDIT_USERNAME/REDDIT_PASSWORD are only needed for the script (password) grant.", docsUrl: "https://www.reddit.com/dev/api" },
   http,
   auth: login,
   async whoami() {

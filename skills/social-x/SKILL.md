@@ -15,7 +15,6 @@ X (Twitter) API v2: post, reply, delete, read your timeline, upload media.
 - `TWITTER_API_SECRET`
 - `TWITTER_ACCESS_TOKEN`
 - `TWITTER_ACCESS_TOKEN_SECRET`
-- `TWITTER_BEARER_TOKEN`
 
 OAuth 1.0a user-context keys from the X developer portal.
 

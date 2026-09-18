@@ -109,7 +109,9 @@ async function login(): Promise<void> {
   note(`Opening the browser for Google authorisation.\n${url}`)
   Bun.spawn(["open", url])
   try {
-    const c = await Promise.race([code, Bun.sleep(180_000).then(() => { throw new Error("timed out waiting for the Google callback") })])
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error("timed out waiting for the Google callback")), 180_000) })
+    const c = await Promise.race([code, timeout]).finally(() => clearTimeout(timer))
     const t = await tokenRequest({ grant_type: "authorization_code", code: c, code_verifier: verifier, redirect_uri: redirect })
     note(`YouTube OAuth stored. Access token good for ${Math.round((t.expires_at - Date.now()) / 60000)} min; refresh token kept for renewals.`)
   } finally { server.stop(true) }

@@ -28,6 +28,7 @@ import { emit, note } from "../../core/output.ts"
 
 const TRADING_VERSION = "1349"
 const SITE_IDS: Record<string, string> = { EBAY_US: "0", EBAY_GB: "3", EBAY_AU: "15", EBAY_DE: "77", EBAY_CA: "2" }
+const CURRENCY: Record<string, string> = { EBAY_US: "USD", EBAY_GB: "GBP", EBAY_AU: "AUD", EBAY_DE: "EUR", EBAY_CA: "CAD" }
 const OAUTH_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
@@ -179,7 +180,9 @@ async function oauthLogin(): Promise<void> {
   const url = `${await authBase()}/oauth2/authorize?client_id=${encodeURIComponent(e.EBAY_CLIENT_ID)}&redirect_uri=${encodeURIComponent(e.EBAY_RUNAME)}&response_type=code&scope=${encodeURIComponent(OAUTH_SCOPES.join(" "))}`
   note(`Opening the browser for eBay authorisation. Accept the self-signed certificate warning for localhost.\n${url}`)
   Bun.spawn(["open", url])
-  const c = await Promise.race([code, Bun.sleep(180_000).then(() => { throw new Error("timed out waiting for the eBay callback") })])
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error("timed out waiting for the eBay callback")), 180_000) })
+  const c = await Promise.race([code, timeout]).finally(() => clearTimeout(timer))
   server.stop(true)
   const t = await tokenRequest({ grant_type: "authorization_code", code: c, redirect_uri: e.EBAY_RUNAME })
   note(`eBay OAuth stored. Access token good for ${Math.round((t.expires_at - Date.now()) / 60000)} min; refresh token ~${Math.round((t.refresh_expires_at - Date.now()) / 86400000)} days.`)
@@ -245,7 +248,7 @@ export const ebay: Platform = {
   name: "ebay",
   summary: "eBay: list, revise, messages, offers, categories (Trading, Auth'n'Auth) and any Sell REST API (OAuth)",
   spec: { kind: "openapi", source: "https://developer.ebay.com/api-docs/master/sell/inventory/openapi/3/sell_inventory_v1_oas3.json (vendored: the host blocks non-browser fetches)" },
-  credentials: { keys: ["EBAY_AUTH_TOKEN"], hint: "Auth'n'Auth user token for the Trading API (listing, messages, offers). EBAY_CLIENT_ID + EBAY_CLIENT_SECRET add category/specifics lookups (app-only token, no sign-in). Add EBAY_RUNAME and run `social auth login ebay` only for the user-scoped Sell REST APIs. EBAY_MARKETPLACE (default EBAY_AU), EBAY_SANDBOX=1 optional.", docsUrl: "https://developer.ebay.com/develop/apis" },
+  credentials: { keys: ["EBAY_AUTH_TOKEN"], optionalKeys: ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_RUNAME", "EBAY_MARKETPLACE", "EBAY_SANDBOX"], hint: "Auth'n'Auth user token for the Trading API (listing, messages, offers). EBAY_CLIENT_ID + EBAY_CLIENT_SECRET add category/specifics lookups (app-only token, no sign-in). Add EBAY_RUNAME and run `social auth login ebay` only for the user-scoped Sell REST APIs. EBAY_MARKETPLACE (default EBAY_AU), EBAY_SANDBOX=1 optional.", docsUrl: "https://developer.ebay.com/develop/apis" },
   http: rest,
   auth: oauthLogin,
   async whoami() {
@@ -289,7 +292,7 @@ export const ebay: Platform = {
 
     cmd.command("offers").description("pending Best Offers on your listings (GetBestOffers)").option("--item <id>", "only this item").option("--json").option("--jq <e>").action(async (o) => {
       const t = await trading("GetBestOffers", `${o.item ? `<ItemID>${xml.esc(o.item)}</ItemID>` : ""}<BestOfferStatus>Active</BestOfferStatus><DetailLevel>ReturnAll</DetailLevel>`)
-      const offers = xml.all(t, "BestOffer").map((b) => ({ offerId: xml.get(b, "BestOfferID"), itemId: xml.get(t, "ItemID"), price: xml.get(b, "Price"), buyer: xml.get(b, "UserID"), quantity: xml.get(b, "Quantity"), message: xml.get(b, "BuyerMessage"), expires: xml.get(b, "ExpirationTime") }))
+      const offers = xml.all(t, "ItemBestOffers").flatMap((blk) => { const itemId = xml.get(blk, "ItemID"); return xml.all(blk, "BestOffer").map((b) => ({ offerId: xml.get(b, "BestOfferID"), itemId, price: xml.get(b, "Price"), buyer: xml.get(b, "UserID"), quantity: xml.get(b, "Quantity"), message: xml.get(b, "BuyerMessage"), expires: xml.get(b, "ExpirationTime") })) })
       await emit(offers, o, (d) => d.map((x: any) => `${x.offerId}  ${x.price}  ${x.buyer}  ${x.message}`).join("\n") || "(no offers)")
     })
 
@@ -297,7 +300,8 @@ export const ebay: Platform = {
       const a = { accept: "Accept", decline: "Decline", counter: "Counter" }[action as string]
       if (!a) throw new Error("action must be accept, decline or counter")
       if (a === "Counter" && !o.counter) throw new Error("--counter <price> is required for counter")
-      const body = `<ItemID>${xml.esc(itemId)}</ItemID><BestOfferID>${xml.esc(offerId)}</BestOfferID><Action>${a}</Action>${o.counter ? `<CounterOfferPrice currencyID="AUD">${Number(o.counter).toFixed(2)}</CounterOfferPrice><CounterOfferQuantity>1</CounterOfferQuantity>` : ""}${o.message ? `<SellerResponse>${xml.esc(o.message)}</SellerResponse>` : ""}`
+      const cur = CURRENCY[await marketplace()] ?? "USD"
+      const body = `<ItemID>${xml.esc(itemId)}</ItemID><BestOfferID>${xml.esc(offerId)}</BestOfferID><Action>${a}</Action>${o.counter ? `<CounterOfferPrice currencyID="${cur}">${Number(o.counter).toFixed(2)}</CounterOfferPrice><CounterOfferQuantity>1</CounterOfferQuantity>` : ""}${o.message ? `<SellerResponse>${xml.esc(o.message)}</SellerResponse>` : ""}`
       const t = await trading("RespondToBestOffer", body)
       await emit({ ack: xml.get(t, "Ack") }, o, (d) => `${a}: ${d.ack}`)
     })
@@ -326,9 +330,10 @@ export const ebay: Platform = {
         const l: Listing = JSON.parse(o.input === "-" ? await Bun.stdin.text() : await Bun.file(o.input).text())
         for (const k of ["title", "description", "price", "categoryId", "condition", "images", "postcode", "location", "shipping"] as const) if (l[k] === undefined) throw new Error(`listing is missing "${k}"`)
         l.images = await resolveImages(l.images)
-        const call = o.verify ? "VerifyAddFixedPriceItem" : "AddFixedPriceItem"
+        const call = l.format === "Auction" ? (o.verify ? "VerifyAddItem" : "AddItem") : (o.verify ? "VerifyAddFixedPriceItem" : "AddFixedPriceItem")
         const t = await trading(call, listingXml(l))
-        const fees = xml.all(t, "Fee").map((f) => ({ name: xml.get(f, "Name"), amount: xml.get(f, "Fee") })).filter((f) => Number(f.amount) > 0)
+        // Fees come as <Fee><Name>ListingFee</Name><Fee currencyID="AUD">0.0</Fee></Fee>: pair each Name with the amount that follows it.
+        const fees = [...t.matchAll(/<Name>([^<]+)<\/Name>\s*<Fee currencyID="[A-Z]{3}">([^<]+)<\/Fee>/g)].map((m) => ({ name: m[1], amount: m[2] })).filter((f) => Number(f.amount) > 0)
         const res = { itemId: xml.get(t, "ItemID"), ack: xml.get(t, "Ack"), fees, url: xml.get(t, "ItemID") ? `https://www.ebay.com.au/itm/${xml.get(t, "ItemID")}` : undefined, warnings: xml.all(t, "Errors").map((e) => xml.get(e, "LongMessage")) }
         await emit(res, o, (d) => `${o.verify ? "verified" : "listed"}: ${d.ack}${d.itemId ? `  ${d.url}` : ""}\nfees: ${d.fees.map((f: any) => `${f.name} ${f.amount}`).join(", ") || "none"}${d.warnings.length ? "\nwarnings: " + d.warnings.join("; ") : ""}`)
       })

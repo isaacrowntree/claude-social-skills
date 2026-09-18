@@ -7,7 +7,8 @@ export function authCommand(platforms: Record<string, Platform>): Command {
   const c = new Command("auth").description("Store credentials for a platform (keyring, or ~/.config/social/.env)")
   c.command("set <platform> <key> <value>").description("store one credential value").action(async (platform, key, value) => {
     const p = platforms[platform]; if (!p) throw new Error(`unknown platform ${platform}`)
-    if (!p.credentials.keys.includes(key)) throw new Error(`${platform} does not use ${key}; expected one of ${p.credentials.keys.join(", ")}`)
+    const accepted = [...p.credentials.keys, ...(p.credentials.optionalKeys ?? [])]
+    if (!accepted.includes(key)) throw new Error(`${platform} does not use ${key}; expected one of ${accepted.join(", ")}`)
     const where = await config.set(key, value)
     process.stderr.write(`stored ${key} in ${where === "keyring" ? "the OS keyring" : config.ENV_FILE}\n`)
   })
@@ -21,9 +22,9 @@ export function authCommand(platforms: Record<string, Platform>): Command {
     const rows: Record<string, unknown>[] = []
     for (const p of list) {
       if (!p) throw new Error(`unknown platform ${platform}`)
-      for (const k of p.credentials.keys) rows.push({ platform: p.name, key: k, present: !!(await config.get(k)) })
+      for (const k of [...p.credentials.keys, ...(p.credentials.optionalKeys ?? [])]) rows.push({ platform: p.name, key: k, present: !!(await config.get(k)), optional: !p.credentials.keys.includes(k) || undefined })
     }
-    await emit(rows, {}, (r) => r.map((x: any) => `${x.present ? "✓" : "✗"} ${x.platform.padEnd(10)} ${x.key}`).join("\n"))
+    await emit(rows, {}, (r) => r.map((x: any) => `${x.present ? "✓" : x.optional ? "·" : "✗"} ${x.platform.padEnd(10)} ${x.key}${x.optional ? "  (optional)" : ""}`).join("\n"))
   })
   return c
 }
@@ -31,13 +32,17 @@ export function authCommand(platforms: Record<string, Platform>): Command {
 export function doctorCommand(platforms: Record<string, Platform>): Command {
   return new Command("doctor").description("make one cheap authenticated call per configured platform and report").option("--json").action(async (o) => {
     const out: Record<string, unknown>[] = []
+    let failed = false
     for (const p of Object.values(platforms)) {
-      const have = (await Promise.all(p.credentials.keys.map((k) => config.get(k)))).every(Boolean)
+      const sets = p.credentials.minimal ?? [p.credentials.keys]
+      let have = false
+      for (const set of sets) if ((await Promise.all(set.map((k) => config.get(k)))).every(Boolean)) { have = true; break }
       if (!have) { out.push({ platform: p.name, status: "not configured" }); continue }
       if (!p.whoami) { out.push({ platform: p.name, status: "configured (no check available)" }); continue }
       try { const who = await p.whoami(); out.push({ platform: p.name, status: "ok", who }) }
-      catch (e: any) { out.push({ platform: p.name, status: "error", error: e.message.split("\n")[0] }) }
+      catch (e: any) { failed = true; out.push({ platform: p.name, status: "error", error: e.message.split("\n")[0] }) }
     }
     await emit(out, o, (r) => r.map((x: any) => `${x.status === "ok" ? "✓" : x.status === "error" ? "✗" : "·"} ${x.platform.padEnd(10)} ${x.status}${x.who ? "  " + JSON.stringify(x.who) : ""}${x.error ? "  " + x.error : ""}`).join("\n"))
+    if (failed) process.exitCode = 1
   })
 }

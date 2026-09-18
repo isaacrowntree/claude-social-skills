@@ -14,7 +14,9 @@ export interface Platform {
   /** Where the spec came from (URL or "lexicons" or "none"), for the skill docs. */
   spec: { kind: "openapi" | "discovery" | "lexicon" | "none"; source: string; pinnedSha256?: string }
   /** Env/keyring keys this platform needs and how to get them. */
-  credentials: { keys: string[]; hint: string; docsUrl: string }
+  /** `keys`: what a full setup needs. `optionalKeys`: also accepted by `auth set`. `minimal`: any one
+   *  of these sets being present means the platform is usable (defaults to all of `keys`). */
+  credentials: { keys: string[]; optionalKeys?: string[]; minimal?: string[][]; hint: string; docsUrl: string }
   /** Build an authenticated HTTP client. Throws a helpful error when credentials are missing. */
   http(): Promise<Http>
   /** Register curated commands under `social <platform> …`. */

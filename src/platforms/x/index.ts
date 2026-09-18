@@ -53,7 +53,7 @@ export const x: Platform = {
   name: "x",
   summary: "X (Twitter) API v2: post, reply, delete, read your timeline, upload media",
   spec: { kind: "openapi", source: "https://api.x.com/2/openapi.json" },
-  credentials: { keys: [...USER_KEYS, "TWITTER_BEARER_TOKEN"], hint: "OAuth 1.0a user-context keys from the X developer portal.", docsUrl: "https://docs.x.com/x-api" },
+  credentials: { keys: USER_KEYS, optionalKeys: ["TWITTER_BEARER_TOKEN"], minimal: [USER_KEYS, ["TWITTER_BEARER_TOKEN"]], hint: "OAuth 1.0a user-context keys from the X developer portal.", docsUrl: "https://docs.x.com/x-api" },
   http: anyHttp,
   async whoami() {
     const have = (await Promise.all(USER_KEYS.map((k) => config.get(k)))).every(Boolean)

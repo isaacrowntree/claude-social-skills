@@ -17,7 +17,7 @@ function coerce(v: string): unknown {
   if (v === "true") return true
   if (v === "false") return false
   if (v === "null") return null
-  if (/^-?\d+$/.test(v)) return Number(v)
+  if (/^-?\d+$/.test(v)) return Number.isSafeInteger(Number(v)) ? Number(v) : v // ids above 2^53 stay strings
   if (/^-?\d+\.\d+$/.test(v)) return Number(v)
   if ((v.startsWith("{") && v.endsWith("}")) || (v.startsWith("[") && v.endsWith("]"))) { try { return JSON.parse(v) } catch {} }
   return v

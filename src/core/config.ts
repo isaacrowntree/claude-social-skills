@@ -25,7 +25,8 @@ function parseEnvFile(text: string): Record<string, string> {
     if (eq < 0) continue
     const k = line.slice(0, eq).trim()
     let v = line.slice(eq + 1).trim()
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
+    if (v.startsWith('"') && v.endsWith('"')) { try { v = JSON.parse(v) } catch { v = v.slice(1, -1) } }
+    else if (v.startsWith("'") && v.endsWith("'")) v = v.slice(1, -1)
     if (v !== "") out[k] = v
   }
   return out
