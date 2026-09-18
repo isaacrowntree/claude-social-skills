@@ -5,7 +5,7 @@ One command-line tool for X, Bluesky, Mastodon, Reddit, Facebook, Instagram, Thr
 ```bash
 social x post "hello"                          # curated commands for what you do daily
 social ebay selling                            # your active listings, with prices
-social email trace 66528                       # SPF/DKIM/DMARC verdict and the Received chain
+social email trace <id>                        # SPF/DKIM/DMARC verdict and the Received chain
 social api mastodon api/v1/trends/tags         # any endpoint of any platform, auth applied
 social api ebay sell/inventory/v1/offer --input offer.json
 social --dry-run bluesky post "test"           # print the request, send nothing

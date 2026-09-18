@@ -3,8 +3,40 @@
   "version": "2.0.0",
   "description": "One CLI for X, Bluesky, Mastodon, Reddit, Facebook, Instagram, Threads, YouTube, eBay and himalaya email, built from each platform's live API spec. Run directly with Bun; no build step.",
   "license": "MIT",
+  "author": "Isaac Rowntree",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/isaacrowntree/claude-social-skills.git"
+  },
+  "homepage": "https://github.com/isaacrowntree/claude-social-skills#readme",
+  "bugs": {
+    "url": "https://github.com/isaacrowntree/claude-social-skills/issues"
+  },
+  "engines": {
+    "bun": ">=1.2"
+  },
+  "keywords": [
+    "cli",
+    "bun",
+    "x",
+    "twitter",
+    "bluesky",
+    "mastodon",
+    "reddit",
+    "facebook",
+    "instagram",
+    "threads",
+    "youtube",
+    "ebay",
+    "email",
+    "himalaya",
+    "claude-code",
+    "skills"
+  ],
   "type": "module",
-  "bin": { "social": "./src/cli.ts" },
+  "bin": {
+    "social": "./src/cli.ts"
+  },
   "scripts": {
     "social": "bun run src/cli.ts",
     "gen": "bun run scripts/gen.ts",
