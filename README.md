@@ -1,253 +1,110 @@
-# claude-social-skills
+# social
 
-Claude Code plugin marketplace for social media, email, and e-commerce.
+One command-line tool for X, Bluesky, Mastodon, Reddit, Facebook, Instagram, Threads, YouTube, eBay and email, built from each platform's published API description and run directly by [Bun](https://bun.sh). No build step, no MCP server: a `social` binary on your PATH and one Claude Code skill per platform, generated from the binary so the docs cannot drift from what it does.
 
-No MCP servers. Just scripts + skills that teach Claude how to use them.
-
-## Plugins
-
-| Plugin | Description |
-|--------|-------------|
-| **social-post** | Post to Twitter/X, Reddit, Facebook, and Instagram |
-| **ebay-listing** | List items for sale on eBay |
-| **himalaya-email** | Read, send, and manage email using the Himalaya CLI |
+```bash
+social x post "hello"                          # curated commands for what you do daily
+social ebay selling                            # your active listings, with prices
+social email trace 66528                       # SPF/DKIM/DMARC verdict and the Received chain
+social api mastodon api/v1/trends/tags         # any endpoint of any platform, auth applied
+social api ebay sell/inventory/v1/offer --input offer.json
+social --dry-run bluesky post "test"           # print the request, send nothing
+```
 
 ## Install
 
-In Claude Code:
-
-```
-/plugin marketplace add isaacrowntree/claude-social-skills
-/plugin install social-post@social-skills
-/plugin install ebay-listing@social-skills
-/plugin install himalaya-email@social-skills
-```
-
-## social-post
-
-### Dependencies
-
 ```bash
-pip install requests requests-oauthlib
+git clone https://github.com/isaacrowntree/claude-social-skills && cd claude-social-skills
+./scripts/setup.sh      # bun install, `social` on PATH, fetch + pin specs, link skills into ~/.claude/skills
+social auth status      # what each platform still needs
 ```
 
-### Credentials
+Or as a Claude Code plugin: `/plugin marketplace add isaacrowntree/claude-social-skills`.
 
-Export environment variables for the platforms you want to use:
+## Credentials
 
-```bash
-# Twitter/X
-export TWITTER_API_KEY=...
-export TWITTER_API_SECRET=...
-export TWITTER_ACCESS_TOKEN=...
-export TWITTER_ACCESS_TOKEN_SECRET=...
+Every platform reads its keys from, in order: the environment, `~/.config/social/.env`, the OS keyring. `social auth set <platform> <KEY> <value>` writes to the keyring when one exists. Platforms with a browser flow use `social auth login <platform>`.
 
-# Reddit
-export REDDIT_CLIENT_ID=...
-export REDDIT_CLIENT_SECRET=...
-export REDDIT_USERNAME=...
-export REDDIT_PASSWORD=...
+| platform | what you need | flow |
+|---|---|---|
+| x | `TWITTER_API_KEY`, `TWITTER_API_SECRET`, `TWITTER_ACCESS_TOKEN`, `TWITTER_ACCESS_TOKEN_SECRET`; `TWITTER_BEARER_TOKEN` alone for reads | paste from the developer portal |
+| bluesky | `BLUESKY_HANDLE`, `BLUESKY_APP_PASSWORD` | app password, no redirect |
+| mastodon | `MASTODON_INSTANCE`, `MASTODON_ACCESS_TOKEN` | paste, or `auth login` (paste-the-code flow, no redirect server) |
+| reddit | `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, plus username/password (2FA off) or `auth login` | Reddit requires app approval since Nov 2025 |
+| facebook | `FB_PAGE_ID`, `FB_PAGE_ACCESS_TOKEN` | long-lived page token from the Graph API Explorer |
+| instagram | `IG_USER_ID`, `IG_ACCESS_TOKEN` | same |
+| threads | `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN` | Threads tester + token exchange |
+| youtube | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` then `auth login` | OAuth with PKCE on a loopback port |
+| ebay | `EBAY_AUTH_TOKEN` for everything day-to-day; `EBAY_CLIENT_ID` + `EBAY_CLIENT_SECRET` for category lookups; add `EBAY_RUNAME` + `auth login` only for user-scoped Sell REST | Auth'n'Auth is one pasted token, no server |
+| email | none here; `himalaya account configure` | wraps the installed himalaya CLI (v2.1.0) |
 
-# Facebook
-export FB_PAGE_ID=...
-export FB_ACCESS_TOKEN=...
+`social doctor` makes one cheap authenticated read per configured platform.
 
-# Instagram
-export IG_USER_ID=...
-export IG_ACCESS_TOKEN=...
-```
+## How it is built
 
-| Platform | Where to get credentials | Account type |
-|----------|-------------------------|--------------|
-| **Twitter/X** | [Developer Portal](https://developer.x.com/en/portal/dashboard) | Any (free tier: ~50 posts/month) |
-| **Reddit** | [App Preferences](https://www.reddit.com/prefs/apps) — create "script" type | Any (2FA must be disabled) |
-| **Facebook** | [Graph API Explorer](https://developers.facebook.com/tools/explorer/) | Page (not personal) |
-| **Instagram** | Same as Facebook, linked IG account | Business/Creator only |
+- **Specs, pinned.** `scripts/specs.ts` lists every platform that publishes a machine-readable description: X (official OpenAPI 3), Bluesky (its OpenAPI rendering of the lexicons), Mastodon (community OpenAPI tracking 4.7), YouTube (Google Discovery). `bun run gen` fetches each, checks it against a pinned SHA-256, and generates TypeScript types. `bun run verify-gen` fails in CI when upstream publishes something new, so a changed API is a failing build, not a surprise. Meta, Reddit and eBay publish no fetchable spec; those wrappers cite the doc page for each call in a comment.
+- **One HTTP layer** (`src/core/http.ts`): retries on 502/503/504 for idempotent methods, one wait on 429, typed `ApiError` with the response body, and `--dry-run`. Every platform is a thin config over it.
+- **One contract** (`src/core/platform.ts`): a platform is an authenticated client plus a handful of curated commands. Everything else goes through `social api <platform> <path>`, which is the escape hatch and the reason there is no flag per API field.
+- **Docs from the binary.** `bun run gen-skills` writes `skills/social-<platform>/SKILL.md` from the registered commands and their flags; `--verify` fails CI on drift.
+- **Tests without the network.** `bun test` runs every curated command against a local fake that asserts the exact method, path, query, headers and body. `social doctor` and the smoke job in CI are the only things that touch real servers.
 
-### Usage
+## Verified against the real servers (2026-09-18)
 
-```
-> Post this to Reddit r/programming: "Check out this tool..."
-> Share on Twitter and Reddit: "Big announcement..."
-```
+What was exercised live with real credentials, read-only: eBay `GetUser`, `GetMyeBaySelling`, `GetMyMessages`, `GetBestOffers`, `GetItem`, `VerifyAddFixedPriceItem`; himalaya `account list`, `mailbox list`, `envelope list`, `envelope search`, `message read`, `attachment list` on three accounts. What the servers said that the docs do not:
 
-### Direct script usage
+- eBay retired `GetCategories`, `GetCategorySpecifics`, `GetSuggestedCategories`, `GetCategoryFeatures` and `GeteBayOfficialTime` (HTTP 410). Category and item-specifics lookups now use the Commerce Taxonomy API with an app-only token.
+- X returns `402 credits depleted` for an app with no API credits; the auth path is correct but nothing can be read or written until the account has credit.
+- Mastodon: mastodon.social answers the public timeline with 422 without a token; other instances answer 200.
+- Reddit: logged-out JSON is blocked by network security for some IPs regardless of User-Agent, and any API access now needs explicit approval.
+- Meta: the Graph API is on v26.0 (the old scripts used v24.0); header-based auth failures are 401, query-string ones are 400.
+- Bluesky: an expired access token is a 400 `ExpiredToken`, not a 401; bad credentials are `AuthenticationRequired`, which the OpenAPI does not list.
+- himalaya v2.1.0 rejects eight flags the previous skill documented for v1.2.0, and reading no longer marks a message seen.
 
-```bash
-# Twitter
-python3 scripts/tweet.py "Hello world"
+Not exercised live for lack of credentials on the build machine: any authenticated call on Bluesky, Mastodon, Reddit, Facebook, Instagram, Threads and YouTube, and anything that publishes, sends, moves or deletes. Each of those is covered by the local fake only.
 
-# Reddit
-python3 scripts/reddit_post.py post programming "My title" --text "Post body"
-python3 scripts/reddit_post.py comment t3_abc123 "Nice post!"
-
-# Facebook
-python3 scripts/fb_post.py "Page update" --link "https://example.com"
-
-# Instagram (image must be a public URL)
-python3 scripts/ig_post.py image "https://example.com/photo.jpg" --caption "Caption"
-python3 scripts/ig_post.py reel "https://example.com/video.mp4" --caption "Reel caption"
-```
-
-### Platform limitations
-
-- **Twitter**: Free tier allows ~50 posts/month. OAuth 1.0a required for posting.
-- **Reddit**: API key self-service was restricted Nov 2025. Existing keys still work. 2FA must be disabled.
-- **Facebook**: Page posting only (no personal profiles via API). 200 calls/hour.
-- **Instagram**: Business accounts only. Must be linked to a Facebook Page. Images must be publicly hosted JPEG URLs. 25 posts/day max.
-
-## ebay-listing
-
-List items for sale on eBay. Supports fixed-price and auction listings with local image upload, product photo cleanup, and multiple marketplaces.
-
-### Dependencies
-
-```bash
-pip install requests Pillow
-```
-
-### Setup
-
-1. Create an app at [developer.ebay.com](https://developer.ebay.com) (free, no API fees)
-2. Go to the **User Tokens** tab > **Auth'n'Auth** > **Sign in to Production**
-3. Sign in with your eBay account to generate a token
-4. Export it:
-   ```bash
-   export EBAY_AUTH_TOKEN=<your-token>
-   ```
-
-That's it. The token lasts ~18 months and the script uses eBay's Trading API (XML) with it.
-
-> **Why Auth'n'Auth?** The OAuth 2.0 alternative requires a browser-based redirect flow that's finicky on localhost. Auth'n'Auth is simpler for personal use — one token, no callback server. The script supports both methods and auto-detects based on which env vars are set.
-
-### Usage
+## Commands
 
 ```
-> List my GoPro on eBay for $299, condition is like new
-> Create a draft eBay listing for this camera with these photos
-> Clean up my product photos in this folder
+Commands:
+  x                                X (Twitter) API v2: post, reply, delete, read
+                                   your timeline, upload media
+  ebay                             eBay: list, revise, messages, offers,
+                                   categories (Trading, Auth'n'Auth) and any
+                                   Sell REST API (OAuth)
+  mastodon                         Mastodon (any instance): post, reply, delete,
+                                   upload media, home timeline, notifications,
+                                   profiles
+  facebook                         Facebook Page via the Graph API: post text,
+                                   links and photos, read and delete your Page's
+                                   posts
+  instagram                        Instagram Business/Creator via the Graph API:
+                                   publish images and reels from public URLs,
+                                   list your media
+  threads                          Threads API: post text or an image, read your
+                                   posts and profile
+  youtube                          YouTube Data API v3: your channel, uploads,
+                                   video details, comments, upload and delete
+                                   videos
+  bluesky                          Bluesky (AT Protocol): post, reply, delete,
+                                   timeline, profiles; any XRPC method via
+                                   `social api bluesky`
+  reddit                           Reddit: post, comment, delete, inbox, home
+                                   feed and subreddit listings, plus any Data
+                                   API path
+  email                            Email through the himalaya CLI: list, read,
+                                   search, trace headers, send, reply, move,
+                                   flag, delete
+  api [options] <platform> <path>  Call any endpoint of a platform directly,
+                                   with its auth applied
+  auth                             Store credentials for a platform (keyring, or
+                                   ~/.config/social/.env)
+  doctor [options]                 make one cheap authenticated call per
+                                   configured platform and report
+  help [command]                   display help for command
 ```
 
-### Direct script usage
+Each platform has its own `social <platform> --help` and a `skills/social-<platform>/SKILL.md` with every command and flag.
 
-```bash
-# Create a listing
-python3 scripts/ebay_list.py list \
-  --title "GoPro Hero 12 Black" \
-  --description "Brand new, sealed in box." \
-  --price 299.99 \
-  --condition NEW \
-  --image "https://example.com/photo.jpg" \
-  --marketplace US \
-  --currency USD
+## Licence
 
-# Photo cleanup (auto white balance, contrast, sharpening)
-python3 scripts/photo_cleanup.py <directory|file>
-```
-
-### Listing options
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--title` | Yes | Item title (max 80 chars) |
-| `--description` | Yes | Item description (max 4000 chars) |
-| `--price` | Yes | Listing price |
-| `--condition` | Yes | NEW, LIKE_NEW, USED_EXCELLENT, USED_VERY_GOOD, USED_GOOD, FOR_PARTS_OR_NOT_WORKING, etc. |
-| `--image` | Yes | HTTPS image URL (repeatable for multiple images) |
-| `--category` | No | eBay category ID |
-| `--marketplace` | No | US (default), UK, AU, CA, DE, FR, IT, ES |
-| `--currency` | No | USD (default), GBP, AUD, CAD, EUR |
-| `--format` | No | FIXED_PRICE (default) or AUCTION |
-| `--quantity` | No | Number available (default: 1) |
-| `--sku` | No | Custom SKU (auto-generated if omitted) |
-| `--brand` | No | Brand name |
-| `--draft` | No | Create offer without publishing (for review) |
-
-### Platform notes
-
-- Free API access, no fees. Auth'n'Auth token lasts ~18 months.
-- Supports fixed-price and auction listings.
-- Includes `photo_cleanup.py` for auto white balance, contrast, brightness, and sharpening of product photos.
-- Also supports OAuth 2.0 (Inventory API) if you set `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_RUNAME` instead — auto-detects based on which env vars are present.
-
-## himalaya-email
-
-Read, send, and manage email from Claude Code using the [himalaya](https://github.com/pimalaya/himalaya) CLI. No scripts needed — this plugin teaches Claude how to use the himalaya commands directly.
-
-### Prerequisites
-
-1. Install himalaya (v1.2.0+):
-   ```bash
-   brew install himalaya
-   ```
-2. Configure your email account in `~/.config/himalaya/config.toml` (or `~/Library/Application Support/himalaya/config.toml` on macOS). See the [himalaya docs](https://github.com/pimalaya/himalaya) for config examples.
-
-### Features
-
-- List and read emails from any folder (INBOX, Sent, Drafts, etc.)
-- Send emails and reply to threads with proper threading headers
-- Trace email origins — inspect SPF, DKIM, DMARC, and Received headers
-- Preview mode (`-p` flag) to read without marking as seen
-- Gmail folder alias support (Sent Mail, Drafts, Bin, Spam)
-- JSON output for programmatic use
-
-### Usage
-
-```
-> Check my inbox
-> Read the latest email from GitHub
-> Reply to that email saying thanks
-> Where did this email actually come from? Check the headers
-> Show me emails in my Sent folder
-```
-
-### Platform notes
-
-- Works with any IMAP/SMTP email provider (Gmail, Outlook, Fastmail, etc.)
-- Gmail users: set `message.send.save-copy = false` in config to avoid duplicate sent messages.
-- No API keys needed — uses standard IMAP/SMTP with app passwords.
-
-## Repo structure
-
-```
-claude-social-skills/
-├── .claude-plugin/
-│   └── marketplace.json           # Marketplace catalog
-└── plugins/
-    ├── social-post/
-    │   ├── .claude-plugin/
-    │   │   └── plugin.json        # Plugin manifest
-    │   ├── skills/
-    │   │   └── social-post/
-    │   │       └── SKILL.md       # Skill instructions
-    │   ├── scripts/
-    │   │   ├── tweet.py           # Twitter/X (OAuth 1.0a)
-    │   │   ├── reddit_post.py     # Reddit (OAuth2)
-    │   │   ├── fb_post.py         # Facebook Pages (Graph API v24.0)
-    │   │   └── ig_post.py         # Instagram Business (Graph API v24.0)
-    │   ├── requirements.txt
-    │   └── .env.example
-    ├── ebay-listing/
-    │   ├── .claude-plugin/
-    │   │   └── plugin.json        # Plugin manifest
-    │   ├── skills/
-    │   │   └── ebay-listing/
-    │   │       └── SKILL.md       # Skill instructions
-    │   ├── scripts/
-    │   │   ├── ebay_list.py       # eBay (Trading API + Inventory API)
-    │   │   └── photo_cleanup.py   # Product photo auto-cleanup
-    │   ├── tests/
-    │   │   └── test_ebay_list.py
-    │   ├── requirements.txt
-    │   └── .env.example
-    └── himalaya-email/
-        ├── .claude-plugin/
-        │   └── plugin.json        # Plugin manifest
-        └── skills/
-            └── himalaya-email/
-                └── SKILL.md       # Skill instructions (uses himalaya CLI)
-```
-
-## License
-
-MIT
+MIT.

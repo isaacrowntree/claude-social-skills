@@ -1,0 +1,33 @@
+name: check
+on:
+  push: { branches: [main, "rebuild/**"] }
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install --frozen-lockfile
+      - name: specs match their pins and generate cleanly
+        run: bun run verify-gen
+      - name: SKILL.md files match the CLI
+        run: bun run gen-skills --verify
+      - name: types
+        run: bun run lint
+      - name: unit tests (no network)
+        run: bun test
+  smoke:
+    # Real servers, real tokens. Runs only when secrets are configured; never on PRs from forks.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs: check
+    env:
+      EBAY_AUTH_TOKEN: ${{ secrets.EBAY_AUTH_TOKEN }}
+      TWITTER_BEARER_TOKEN: ${{ secrets.TWITTER_BEARER_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run src/cli.ts doctor --json

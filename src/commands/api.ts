@@ -7,6 +7,9 @@
  */
 import { Command } from "commander"
 import { readFileSync } from "node:fs"
+
+/** Replaceable in tests. */
+export const io = { stdin: () => readFileSync(0, "utf8") }
 import type { Platform } from "../core/platform.ts"
 import { emit } from "../core/output.ts"
 
@@ -48,7 +51,7 @@ export function apiCommand(platforms: Record<string, Platform>): Command {
       let body: unknown = undefined
       if (o.input) {
         if (Object.keys(fields).length) throw new Error("--input cannot be combined with --field/--raw-field")
-        const text = o.input === "-" ? readFileSync(0, "utf8") : readFileSync(o.input, "utf8")
+        const text = o.input === "-" ? io.stdin() : readFileSync(o.input, "utf8")
         body = JSON.parse(text)
       } else if (Object.keys(fields).length) body = fields
       const query: Record<string, string> = Object.fromEntries(kv(o.query))

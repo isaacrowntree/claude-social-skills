@@ -3,6 +3,7 @@ node_modules/
 .env.*
 !.env.example
 specs/*.raw
+specs/*.json
 src/platforms/*/types.gen.ts
 staging/
 __pycache__/
