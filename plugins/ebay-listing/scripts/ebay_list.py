@@ -49,7 +49,18 @@ SANDBOX_AUTH = "https://auth.sandbox.ebay.com"
 
 TOKEN_FILE = os.path.expanduser("~/.ebay_tokens.json")
 
-SELL_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.inventory"
+# Scopes requested during OAuth. sell.inventory alone is not enough: Promoted
+# Listings needs sell.marketing and send-offer-to-watchers needs sell.negotiation.
+SCOPES = [
+    "https://api.ebay.com/oauth/api_scope",
+    "https://api.ebay.com/oauth/api_scope/sell.inventory",
+    "https://api.ebay.com/oauth/api_scope/sell.marketing",
+    "https://api.ebay.com/oauth/api_scope/sell.account",
+    "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+    "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
+    "https://api.ebay.com/oauth/api_scope/sell.negotiation",
+]
+SELL_SCOPE = " ".join(SCOPES)
 
 # Common eBay marketplace IDs
 MARKETPLACES = {
@@ -106,14 +117,23 @@ CONDITIONS = [
 
 
 def get_auth_mode() -> str:
-    """Detect auth mode: 'authnauth' if EBAY_AUTH_TOKEN is set, else 'oauth'."""
+    """Detect auth mode: 'authnauth' if EBAY_AUTH_TOKEN is set, else 'oauth'.
+
+    EBAY_AUTH_MODE overrides the detection. Needed because the two modes are not
+    interchangeable: Trading (XML) accepts Auth'n'Auth, the Sell REST APIs require
+    OAuth, and having both configured at once is the normal end state.
+    """
+    override = os.environ.get("EBAY_AUTH_MODE", "").strip().lower()
+    if override in ("authnauth", "oauth"):
+        return override
     if os.environ.get("EBAY_AUTH_TOKEN"):
         return "authnauth"
     return "oauth"
 
 
-def get_env():
-    mode = get_auth_mode()
+def get_env(mode: str | None = None):
+    """Resolve credentials. Pass mode to force a specific set regardless of detection."""
+    mode = mode or get_auth_mode()
     sandbox = os.environ.get("EBAY_SANDBOX", "").lower() in ("1", "true", "yes")
 
     if mode == "authnauth":
@@ -184,7 +204,7 @@ def get_access_token() -> str:
 
 
 def refresh_token(tokens: dict) -> dict:
-    env = get_env()
+    env = get_env("oauth")
     resp = requests.post(
         f"{api_base(env['sandbox'])}/identity/v1/oauth2/token",
         headers={
@@ -216,7 +236,7 @@ def refresh_token(tokens: dict) -> dict:
 
 def do_auth():
     """Interactive OAuth flow: opens browser, captures authorization code via local server."""
-    env = get_env()
+    env = get_env("oauth")
     sandbox = env["sandbox"]
     auth_code_holder = {"code": None}
 
@@ -485,6 +505,46 @@ def trading_api_call(
 def _extract_xml_value(xml_text: str, tag: str) -> str:
     match = re.search(f"<{tag}>(.*?)</{tag}>", xml_text, re.DOTALL)
     return match.group(1) if match else ""
+
+
+# --- Generic passthrough ---
+#
+# These two functions cover every eBay endpoint. Prefer them over adding another
+# typed wrapper: the field list for any given call belongs in SKILL.md as reference,
+# not here as argparse flags. The typed helpers below (trading_add_fixed_price_item,
+# revise_fixed_price_item, ...) predate this and are kept for the existing workflows.
+
+
+def rest_call(
+    method: str,
+    path: str,
+    body: dict | None = None,
+    sandbox: bool = False,
+    marketplace: str = "EBAY_AU",
+    query: dict | None = None,
+) -> dict:
+    """Call any eBay Sell REST endpoint with the stored OAuth token.
+
+    path is everything after the host, e.g. "/sell/marketing/v1/ad_campaign".
+    """
+    url = f"{api_base(sandbox)}{path}"
+    headers = {
+        "Authorization": f"Bearer {get_access_token()}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "X-EBAY-C-MARKETPLACE-ID": marketplace,
+    }
+    resp = requests.request(method.upper(), url, headers=headers, json=body, params=query)
+
+    if resp.status_code >= 400:
+        raise EbayApiError(f"REST {method.upper()} {path} -> {resp.status_code}\n{resp.text}")
+
+    if not resp.content:
+        return {"status": resp.status_code}
+    try:
+        return resp.json()
+    except ValueError:
+        return {"status": resp.status_code, "text": resp.text}
 
 
 def upload_picture(
@@ -1468,6 +1528,18 @@ examples:
 
     sub.add_parser("auth", help="Authenticate with eBay (opens browser)")
     sub.add_parser("refresh", help="Refresh access token")
+
+    api_p = sub.add_parser("api", help="Call any Trading API (XML) endpoint directly")
+    api_p.add_argument("call", help="Trading call name, e.g. ReviseFixedPriceItem")
+    api_p.add_argument("--body", default="", help="Inner XML (everything inside the Request element)")
+    api_p.add_argument("--site", default="15", help="Site ID (default 15 = AU)")
+    api_p.add_argument("--raw", action="store_true", help="Print the full XML response")
+
+    rest_p = sub.add_parser("rest", help="Call any Sell REST endpoint directly (needs OAuth)")
+    rest_p.add_argument("method", help="HTTP method: GET, POST, PUT, DELETE")
+    rest_p.add_argument("path", help="Path after the host, e.g. /sell/marketing/v1/ad_campaign")
+    rest_p.add_argument("--data", default="", help="JSON request body")
+    rest_p.add_argument("--marketplace", default="EBAY_AU", help="Marketplace ID (default EBAY_AU)")
     sub.add_parser("dashboard", help="Show all active/sold listings with prices and metrics")
     msg_p = sub.add_parser("messages", help="Show recent eBay messages")
     msg_p.add_argument("--days", type=int, default=14, help="Number of days to look back (default: 14)")
@@ -1574,19 +1646,36 @@ examples:
     sandbox = env["sandbox"]
 
     if args.command == "auth":
-        if env.get("mode") == "authnauth":
-            print("Auth'n'Auth mode — no OAuth flow needed.")
-            print("Your EBAY_AUTH_TOKEN is already set. Use 'list' to create listings.")
-            sys.exit(0)
+        # Always run the OAuth flow. Having EBAY_AUTH_TOKEN set is not a reason to
+        # skip it — Auth'n'Auth cannot reach the Sell REST APIs (Marketing,
+        # Negotiation), so both credentials coexist.
         do_auth()
 
     elif args.command == "refresh":
-        if env.get("mode") == "authnauth":
-            print("Auth'n'Auth tokens don't need refreshing (valid ~18 months).")
-            sys.exit(0)
         tokens = load_tokens()
         refresh_token(tokens)
         print("Token refreshed successfully.")
+
+    elif args.command == "api":
+        auth_token = os.environ.get("EBAY_AUTH_TOKEN", "")
+        if not auth_token:
+            print("Trading API needs EBAY_AUTH_TOKEN (Auth'n'Auth).", file=sys.stderr)
+            sys.exit(1)
+        result = trading_api_call(args.call, args.body, auth_token, env["sandbox"], args.site)
+        ack = _extract_xml_value(result, "Ack")
+        if args.raw or ack not in ("Success", "Warning"):
+            print(result)
+        if ack not in ("Success", "Warning"):
+            errors = _extract_xml_value(result, "LongMessage") or _extract_xml_value(result, "ShortMessage")
+            print(f"\n{args.call} failed: {ack} — {errors}", file=sys.stderr)
+            sys.exit(1)
+        if not args.raw:
+            print(f"{args.call}: {ack}")
+
+    elif args.command == "rest":
+        body = json.loads(args.data) if args.data else None
+        result = rest_call(args.method, args.path, body, env["sandbox"], args.marketplace)
+        print(json.dumps(result, indent=2))
 
     # --- dashboard: show all listings with metrics ---
 

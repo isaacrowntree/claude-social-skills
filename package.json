@@ -1,0 +1,30 @@
+{
+  "name": "social",
+  "version": "2.0.0",
+  "description": "One CLI for X, Bluesky, Mastodon, Reddit, Facebook, Instagram, Threads, YouTube, eBay and himalaya email, built from each platform's live API spec. Run directly with Bun; no build step.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "social": "./src/cli.ts" },
+  "scripts": {
+    "social": "bun run src/cli.ts",
+    "gen": "bun run scripts/gen.ts",
+    "verify-gen": "bun run scripts/gen.ts --verify",
+    "gen-skills": "bun run scripts/gen-skills.ts",
+    "test": "bun test",
+    "lint": "bunx tsc --noEmit",
+    "check": "bun run verify-gen && bun run gen-skills --verify && bun run lint && bun test"
+  },
+  "dependencies": {
+    "@atproto/api": "^0.15.0",
+    "commander": "^13.0.0",
+    "googleapis": "^149.0.0",
+    "jq-web": "^0.6.0",
+    "oauth-1.0a": "^2.2.6",
+    "openapi-fetch": "^0.13.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "openapi-typescript": "^7.6.0",
+    "typescript": "^5.7.0"
+  }
+}

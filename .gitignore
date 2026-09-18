@@ -1,8 +1,11 @@
-.env
-__pycache__/
-*.pyc
-.venv/
 node_modules/
-.DS_Store
-.pytest_cache/
+.env
+.env.*
+!.env.example
+specs/*.raw
+src/platforms/*/types.gen.ts
 staging/
+__pycache__/
+.pytest_cache/
+.claude/
+*.log
