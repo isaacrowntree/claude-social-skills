@@ -273,8 +273,9 @@ export const ebay: Platform = {
 
     cmd.command("selling").description("your active listings (GetMyeBaySelling)").option("-n, --max <n>", "per page", "50").option("--json").option("--jq <e>")
       .action(async (o) => {
-        const t = await trading("GetMyeBaySelling", `<ActiveList><Include>true</Include><Pagination><EntriesPerPage>${Number(o.max)}</EntriesPerPage></Pagination></ActiveList><DetailLevel>ReturnAll</DetailLevel>`)
-        const items = xml.all(t, "Item").map((i) => ({ itemId: xml.get(i, "ItemID"), title: xml.get(i, "Title"), price: xml.get(i, "CurrentPrice"), quantity: xml.get(i, "QuantityAvailable") || xml.get(i, "Quantity"), watchers: xml.get(i, "WatchCount"), url: xml.get(i, "ViewItemURL") }))
+        // Sold/Unsold lists come back unless excluded, and their <Item>s would read as active — scope to <ActiveList>.
+        const t = await trading("GetMyeBaySelling", `<ActiveList><Include>true</Include><Pagination><EntriesPerPage>${Number(o.max)}</EntriesPerPage></Pagination></ActiveList><SoldList><Include>false</Include></SoldList><UnsoldList><Include>false</Include></UnsoldList><DetailLevel>ReturnAll</DetailLevel>`)
+        const items = xml.all(xml.get(t, "ActiveList"), "Item").map((i) => ({ itemId: xml.get(i, "ItemID"), title: xml.get(i, "Title"), price: xml.get(i, "CurrentPrice"), quantity: xml.get(i, "QuantityAvailable") || xml.get(i, "Quantity"), watchers: xml.get(i, "WatchCount"), url: xml.get(i, "ViewItemURL") }))
         await emit(items, o, (d) => d.map((i: any) => `${i.itemId}  ${i.price.padStart(8)}  ${i.title}`).join("\n") || "(no active listings)")
       })
 
