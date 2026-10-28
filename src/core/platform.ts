@@ -23,6 +23,8 @@ export interface Platform {
   register(cmd: Command): void
   /** Interactive auth flow (`social auth <platform>`), if the platform has one. */
   auth?(): Promise<void>
+  /** False when something the platform runs on is missing (email's himalaya binary); doctor then reports it as not installed. */
+  available?(): boolean
   /** A cheap authenticated read used by `social doctor` and live tests. */
   whoami?(): Promise<unknown>
   /** Generated-platform additions to SKILL.md: `body` is appended; `description` and `escapeHatch` replace the generic ones. */

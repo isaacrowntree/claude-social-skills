@@ -100,3 +100,16 @@ test("an OAuth callback page still reaches the browser when the server stops as 
   stopCallbackServer(cb) // the old server.stop(true) here cut the page off ("socket connection was closed unexpectedly")
   expect((await page).length).toBe(20020)
 })
+
+test("doctor reports a platform whose tool is missing as not installed, not as a failure", async () => {
+  const { doctorCommand } = await import("../src/commands/auth.ts")
+  let checked = false
+  const fake: any = { name: "tool", credentials: { keys: [] }, available: () => false, whoami: async () => { checked = true; throw new Error("cannot run tool") } }
+  const out: string[] = []
+  const write = process.stdout.write.bind(process.stdout)
+  process.stdout.write = ((s: any) => { out.push(String(s)); return true }) as any
+  try { await doctorCommand({ tool: fake }).parseAsync(["node", "doctor"]) } finally { process.stdout.write = write }
+  expect(out.join("")).toContain("tool       not installed")
+  expect(checked).toBe(false)
+  expect(process.exitCode ?? 0).toBe(0)
+})

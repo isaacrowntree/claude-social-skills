@@ -144,6 +144,7 @@ export const email: Platform = {
     throw new Error("email wraps the himalaya CLI, not an HTTP API; use `social email …` (or `himalaya …` directly). `social api email` has nothing to call.")
   },
   /** `account check` opens every configured backend (IMAP/SMTP/JMAP) for the default account: the cheapest real auth probe himalaya offers. */
+  available: () => !!Bun.which(BIN),
   async whoami() {
     const accounts = (await run<{ accounts: { name: string; default: boolean; backends: string[] }[] }>(["account", "list"])).data.accounts
     const check = (await run<{ account: string; backends: { backend: string; ok: boolean; error?: string | null }[] }>(["account", "check"])).data

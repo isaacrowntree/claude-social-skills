@@ -38,6 +38,7 @@ export function doctorCommand(platforms: Record<string, Platform>): Command {
       let have = false
       for (const set of sets) if ((await Promise.all(set.map((k) => config.get(k)))).every(Boolean)) { have = true; break }
       if (!have) { out.push({ platform: p.name, status: "not configured" }); continue }
+      if (p.available && !p.available()) { out.push({ platform: p.name, status: "not installed" }); continue }
       if (!p.whoami) { out.push({ platform: p.name, status: "configured (no check available)" }); continue }
       try { const who = await p.whoami(); out.push({ platform: p.name, status: "ok", who }) }
       catch (e: any) { failed = true; out.push({ platform: p.name, status: "error", error: e.message.split("\n")[0] }) }
