@@ -22,11 +22,44 @@ Check what is present with `social auth status x`; store a value with `social au
 
 ## API description this wrapper is built from
 
-openapi: https://api.x.com/2/openapi.json. Refresh with `bun run gen`; CI fails if upstream changes.
+openapi: https://api.x.com/2/openapi.json. Refresh with `social specs pull x`; CI fails if upstream changes.
 
 ## Commands
 
 Every command accepts `--json` (raw JSON) and `--jq <expr>` (filter the JSON with jq).
+
+### `social x apis`
+
+the x API groups and how many operations each has
+
+### `social x ops [filter]...`
+
+search operations: every word must appear in the id, summary, path, description or field names; best matches first
+
+```
+  --api <name>               only this API group (see `social x apis`)
+```
+
+### `social x describe <op>`
+
+parameters, body, scopes and response shape of one operation
+
+```
+  --depth <n>                how deep to expand nested fields (default 2)
+```
+
+### `social x call <op>`
+
+call any operation by id; --dry-run prints the request instead
+
+```
+  -p, --param <k=v>          path/query/header parameter (default [])
+  -f, --field <k=v>          body field, typed (numbers, booleans, null, JSON literals) (default [])
+  --raw-field <k=v>          body field, always a string (default [])
+  --file <field=path>        file for a multipart part (image=./photo.jpg) or a binary body (default [])
+  --output <file>            save a binary response (PDF, image, feed file) here
+  --input <file>             request body from a JSON file (- for stdin)
+```
 
 ### `social x post <text>`
 

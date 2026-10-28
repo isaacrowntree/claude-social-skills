@@ -10,6 +10,7 @@ import type { Platform } from "../../core/platform.ts"
 import { makeHttp, type Http } from "../../core/http.ts"
 import * as config from "../../core/config.ts"
 import { emit } from "../../core/output.ts"
+import { Generated, registerGenerated } from "../../core/openapi.ts"
 
 const BASE = "https://api.x.com/2"
 const USER_KEYS = ["TWITTER_API_KEY", "TWITTER_API_SECRET", "TWITTER_ACCESS_TOKEN", "TWITTER_ACCESS_TOKEN_SECRET"]
@@ -49,6 +50,15 @@ async function userHttp(): Promise<Http> {
   }
 }
 
+/**
+ * Every operation in X's OpenAPI document (api.x.com/2/openapi.json), generated: `social x ops | describe | call` send them
+ * through the same authenticated client as the commands below.
+ */
+export const generated = new Generated({
+  name: "x", indexFile: new URL("./ops.gen.json", import.meta.url).pathname,
+  client: async () => anyHttp(),
+})
+
 export const x: Platform = {
   name: "x",
   summary: "X (Twitter) API v2: post, reply, delete, read your timeline, upload media",
@@ -62,6 +72,7 @@ export const x: Platform = {
     return { auth: "app-only bearer (read-only)", probe: r.data?.username }
   },
   register(cmd: Command) {
+    registerGenerated(cmd, generated)
     cmd.command("post <text>").description("post a tweet").option("--reply-to <id>", "reply to a tweet id").option("--media <ids...>", "media ids from `x upload`").option("--json").option("--jq <e>")
       .action(async (text, o) => {
         const h = await userHttp()

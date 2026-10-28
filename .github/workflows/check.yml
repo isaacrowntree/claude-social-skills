@@ -24,7 +24,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: check
     env:
-      EBAY_AUTH_TOKEN: ${{ secrets.EBAY_AUTH_TOKEN }}
+      # App credentials only: doctor proves them with an app-token read (no sign-in exists in CI).
+      EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+      EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+      # Each is checked only when its secret exists; otherwise doctor reports "not configured".
+      DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+      ETSY_KEYSTRING: ${{ secrets.ETSY_KEYSTRING }}
+      ETSY_SHARED_SECRET: ${{ secrets.ETSY_SHARED_SECRET }}
       TWITTER_BEARER_TOKEN: ${{ secrets.TWITTER_BEARER_TOKEN }}
     steps:
       - uses: actions/checkout@v4

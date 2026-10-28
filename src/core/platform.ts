@@ -12,7 +12,7 @@ export interface Platform {
   /** One-line description shown in `social --help`. */
   summary: string
   /** Where the spec came from (URL or "lexicons" or "none"), for the skill docs. */
-  spec: { kind: "openapi" | "discovery" | "lexicon" | "none"; source: string; pinnedSha256?: string }
+  spec: { kind: "openapi" | "discovery" | "lexicon" | "none"; source: string }
   /** Env/keyring keys this platform needs and how to get them. */
   /** `keys`: what a full setup needs. `optionalKeys`: also accepted by `auth set`. `minimal`: any one
    *  of these sets being present means the platform is usable (defaults to all of `keys`). */
@@ -25,4 +25,6 @@ export interface Platform {
   auth?(): Promise<void>
   /** A cheap authenticated read used by `social doctor` and live tests. */
   whoami?(): Promise<unknown>
+  /** Generated-platform additions to SKILL.md: `body` is appended; `description` and `escapeHatch` replace the generic ones. */
+  skill?(): Promise<{ body: string; description?: string; escapeHatch?: string }>
 }

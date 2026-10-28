@@ -13,7 +13,7 @@ export const io = { stdin: () => readFileSync(0, "utf8") }
 import type { Platform } from "../core/platform.ts"
 import { emit } from "../core/output.ts"
 
-function coerce(v: string): unknown {
+export function coerce(v: string): unknown {
   if (v === "true") return true
   if (v === "false") return false
   if (v === "null") return null
@@ -22,8 +22,18 @@ function coerce(v: string): unknown {
   if ((v.startsWith("{") && v.endsWith("}")) || (v.startsWith("[") && v.endsWith("]"))) { try { return JSON.parse(v) } catch {} }
   return v
 }
-function kv(list: string[] | undefined, sep = "="): [string, string][] {
+export function kv(list: string[] | undefined, sep = "="): [string, string][] {
   return (list ?? []).map((s) => { const i = s.indexOf(sep); if (i < 0) throw new Error(`expected key${sep}value, got "${s}"`); return [s.slice(0, i), s.slice(i + 1)] })
+}
+
+/** A JSON body from -f (typed) / --raw-field (string) fields or --input FILE|-, never both. */
+export function bodyFrom(o: { field?: string[]; rawField?: string[]; input?: string }): unknown {
+  const fields: Record<string, unknown> = {}
+  for (const [k, v] of kv(o.field)) fields[k] = coerce(v)
+  for (const [k, v] of kv(o.rawField)) fields[k] = v
+  if (!o.input) return Object.keys(fields).length ? fields : undefined
+  if (Object.keys(fields).length) throw new Error("--input cannot be combined with --field/--raw-field")
+  return JSON.parse(o.input === "-" ? io.stdin() : readFileSync(o.input, "utf8"))
 }
 
 export function apiCommand(platforms: Record<string, Platform>): Command {
@@ -45,15 +55,7 @@ export function apiCommand(platforms: Record<string, Platform>): Command {
       const p = platforms[platform]
       if (!p) throw new Error(`unknown platform "${platform}"; expected one of ${Object.keys(platforms).join(", ")}`)
       const http = await p.http()
-      const fields: Record<string, unknown> = {}
-      for (const [k, v] of kv(o.field)) fields[k] = coerce(v)
-      for (const [k, v] of kv(o.rawField)) fields[k] = v
-      let body: unknown = undefined
-      if (o.input) {
-        if (Object.keys(fields).length) throw new Error("--input cannot be combined with --field/--raw-field")
-        const text = o.input === "-" ? io.stdin() : readFileSync(o.input, "utf8")
-        body = JSON.parse(text)
-      } else if (Object.keys(fields).length) body = fields
+      const body = bodyFrom(o)
       const query: Record<string, string> = Object.fromEntries(kv(o.query))
       const headers: Record<string, string> = Object.fromEntries(kv(o.header, ":").map(([k, v]) => [k.trim(), v.trim()]))
       const method = (o.method ?? (body ? "POST" : "GET")).toUpperCase()

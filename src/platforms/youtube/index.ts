@@ -19,9 +19,10 @@
 import type { Command } from "commander"
 import { createHash, randomBytes } from "node:crypto"
 import type { Platform } from "../../core/platform.ts"
-import { makeHttp, ApiError, dryRun, type Http } from "../../core/http.ts"
+import { makeHttp, ApiError, dryRun, CALLBACK_PAGE, stopCallbackServer, type Http } from "../../core/http.ts"
 import * as config from "../../core/config.ts"
 import { emit, note } from "../../core/output.ts"
+import { Generated, registerGenerated } from "../../core/openapi.ts"
 
 /** Mutable so unit tests can point every leg at a local fake. */
 export const endpoints = {
@@ -96,11 +97,11 @@ async function login(): Promise<void> {
     port: 0, hostname: "127.0.0.1",
     fetch(req) {
       const u = new URL(req.url)
-      if (u.searchParams.get("state") !== state) return new Response("<h1>State mismatch; try again.</h1>", { status: 400, headers: { "content-type": "text/html" } })
+      if (u.searchParams.get("state") !== state) return new Response("<h1>State mismatch; try again.</h1>", { status: 400, headers: CALLBACK_PAGE })
       const c = u.searchParams.get("code")
-      if (c) { resolveCode(c); return new Response("<h1>Authorised. You can close this tab.</h1>", { headers: { "content-type": "text/html" } }) }
+      if (c) { resolveCode(c); return new Response("<h1>Authorised. You can close this tab.</h1>", { headers: CALLBACK_PAGE }) }
       rejectCode(new Error(`Google authorisation failed: ${u.searchParams.get("error") ?? "unknown"}`))
-      return new Response("<h1>Authorisation failed.</h1>", { status: 400, headers: { "content-type": "text/html" } })
+      return new Response("<h1>Authorisation failed.</h1>", { status: 400, headers: CALLBACK_PAGE })
     },
   })
   const redirect = `http://127.0.0.1:${server.port}/`
@@ -114,7 +115,7 @@ async function login(): Promise<void> {
     const c = await Promise.race([code, timeout]).finally(() => clearTimeout(timer))
     const t = await tokenRequest({ grant_type: "authorization_code", code: c, code_verifier: verifier, redirect_uri: redirect })
     note(`YouTube OAuth stored. Access token good for ${Math.round((t.expires_at - Date.now()) / 60000)} min; refresh token kept for renewals.`)
-  } finally { server.stop(true) }
+  } finally { stopCallbackServer(server) }
 }
 
 // ---------- reads ----------
@@ -165,6 +166,15 @@ export async function uploadVideo(file: string, meta: { title: string; descripti
 
 // ---------- platform ----------
 
+/**
+ * Every operation in Google's YouTube Data API Discovery document, generated: `social youtube ops | describe | call` send them
+ * through the same authenticated client as the commands below.
+ */
+export const generated = new Generated({
+  name: "youtube", indexFile: new URL("./ops.gen.json", import.meta.url).pathname,
+  client: async () => api(),
+})
+
 export const youtube: Platform = {
   name: "youtube",
   summary: "YouTube Data API v3: your channel, uploads, video details, comments, upload and delete videos",
@@ -177,6 +187,7 @@ export const youtube: Platform = {
     return { id: c.id, title: c.snippet?.title, handle: c.snippet?.customUrl, subscribers: c.statistics?.subscriberCount }
   },
   register(cmd: Command) {
+    registerGenerated(cmd, generated)
     cmd.command("me").description("your channel (channels.list mine=true)").option("--json").option("--jq <e>").action(async (o) => {
       await emit(await myChannel(), o, (c) => `${c.snippet?.title} (${c.id})  ${c.snippet?.customUrl ?? ""}\nsubscribers ${c.statistics?.subscriberCount}  videos ${c.statistics?.videoCount}  views ${c.statistics?.viewCount}`)
     })

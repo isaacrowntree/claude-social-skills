@@ -7,12 +7,19 @@ async function jq() {
   return jqReady
 }
 
+/**
+ * Every result of a jq filter, like jq's own output stream. jq-web throws on a filter that
+ * yields nothing (`.orders[]` on an empty list) and merges several results into one, so the
+ * filter is collected into an array here.
+ */
+export async function jqAll(data: unknown, filter: string): Promise<unknown[]> {
+  const out = await (await jq()).json(data, `[${filter}\n]`)
+  return Array.isArray(out) ? out : []
+}
+
 export async function emit(data: unknown, flags: OutputFlags, human?: (d: any) => string): Promise<void> {
   if (flags.jq) {
-    const j = await jq()
-    const out = await j.json(data, flags.jq)
-    if (typeof out === "string") process.stdout.write(out + "\n")
-    else process.stdout.write(JSON.stringify(out, null, 2) + "\n")
+    for (const out of await jqAll(data, flags.jq)) process.stdout.write((typeof out === "string" ? out : JSON.stringify(out, null, 2)) + "\n")
     return
   }
   if (flags.raw && typeof data === "string") { process.stdout.write(data); return }

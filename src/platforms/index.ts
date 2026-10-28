@@ -7,6 +7,9 @@ import { youtube } from "./youtube/index.ts"
 import { bluesky } from "./bluesky/index.ts"
 import { reddit } from "./reddit/index.ts"
 import { email } from "./email/index.ts"
+import { pinterest } from "./pinterest/index.ts"
+import { discord } from "./discord/index.ts"
+import { etsy } from "./etsy/index.ts"
 // Platform modules register themselves here; keep alphabetical after the two references.
-const all: Platform[] = [x, ebay, mastodon, facebook, instagram, threads, youtube, bluesky, reddit, email]
+const all: Platform[] = [x, ebay, mastodon, facebook, instagram, threads, youtube, bluesky, reddit, email, pinterest, discord, etsy]
 export const PLATFORMS: Record<string, Platform> = Object.fromEntries(all.map((p) => [p.name, p]))

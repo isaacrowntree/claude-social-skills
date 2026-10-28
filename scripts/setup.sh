@@ -5,7 +5,9 @@ cd "$(dirname "$0")/.."
 command -v bun >/dev/null || { echo "Install Bun first: curl -fsSL https://bun.sh/install | bash"; exit 1; }
 bun install
 bun link            # puts `social` on PATH (bun's global bin dir)
-bun run gen         # fetch + pin the API specs, generate types
+# Fetch the API specs and generate from them. Lenient: drift from a pin is reported, not fatal,
+# and one unreachable spec doesn't stop setup (rerun `social specs pull` later).
+bun run src/cli.ts specs pull || echo "Some specs could not be pulled; rerun: social specs pull"
 bun run gen-skills  # SKILL.md per platform, from the CLI
 mkdir -p ~/.claude/skills
 for d in skills/social-*; do ln -sfn "$PWD/$d" ~/.claude/skills/"$(basename "$d")"; done

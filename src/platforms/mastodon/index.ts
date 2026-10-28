@@ -15,6 +15,7 @@ import type { Platform } from "../../core/platform.ts"
 import { makeHttp, type Http } from "../../core/http.ts"
 import * as config from "../../core/config.ts"
 import { emit, note } from "../../core/output.ts"
+import { Generated, registerGenerated } from "../../core/openapi.ts"
 import type { paths } from "./types.gen.ts"
 
 type Json<T> = T extends { content: { "application/json": infer B } } ? B : never
@@ -99,6 +100,16 @@ const text = (html: string | null | undefined) => (html ?? "").replace(/<br\s*\/
 const line = (s: Status) => `${s.id}  ${s.created_at.slice(0, 16)}  @${s.account.acct}  ${s.reblog ? "RT @" + s.reblog.account.acct + ": " + text(s.reblog.content) : text(s.content)}`.slice(0, 160)
 const acct = (a: Account) => `@${a.acct} (${a.id})  ${a.display_name}  followers ${a.followers_count}  following ${a.following_count}  posts ${a.statuses_count}\n${a.url}\n${text(a.note)}`
 
+/**
+ * Every operation in the community Mastodon OpenAPI description, generated: `social mastodon ops | describe | call` send them
+ * through the same authenticated client as the commands below.
+ */
+export const generated = new Generated({
+  name: "mastodon", indexFile: new URL("./ops.gen.json", import.meta.url).pathname,
+  client: async () => ((await config.get("MASTODON_ACCESS_TOKEN")) ? userHttp() : publicHttp()),
+  defaults: async () => { const instance = await baseUrl(); return { server: () => instance } },
+})
+
 export const mastodon: Platform = {
   name: "mastodon",
   summary: "Mastodon (any instance): post, reply, delete, upload media, home timeline, notifications, profiles",
@@ -112,6 +123,7 @@ export const mastodon: Platform = {
     return { id: r.id, acct: r.acct, instance: (await baseUrl()).replace(/^https?:\/\//, "") }
   },
   register(cmd: Command) {
+    registerGenerated(cmd, generated)
     // https://docs.joinmastodon.org/methods/statuses/#create
     cmd.command("post <text>").description("publish a status").option("--reply-to <id>", "reply to a status id").option("--visibility <v>", "public | unlisted | private | direct").option("--cw <text>", "content warning (spoiler_text)").option("--media <files...>", "attach local files (uploaded via /api/v2/media first)").option("--json").option("--jq <e>")
       .action(async (status, o) => {

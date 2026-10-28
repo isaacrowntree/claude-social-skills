@@ -1,7 +1,7 @@
 {
   "name": "social",
   "version": "2.0.0",
-  "description": "One CLI for X, Bluesky, Mastodon, Reddit, Facebook, Instagram, Threads, YouTube, eBay and himalaya email, built from each platform's live API spec. Run directly with Bun; no build step.",
+  "description": "One CLI for X, Bluesky, Mastodon, Reddit, Facebook, Instagram, Threads, YouTube, Pinterest, Discord, eBay, Etsy and himalaya email, built from each platform's live API spec. Run directly with Bun; no build step.",
   "license": "MIT",
   "author": "Isaac Rowntree",
   "repository": {
@@ -27,6 +27,9 @@
     "instagram",
     "threads",
     "youtube",
+    "pinterest",
+    "discord",
+    "etsy",
     "ebay",
     "email",
     "himalaya",
@@ -50,6 +53,7 @@
     "@atproto/api": "^0.15.0",
     "commander": "^13.0.0",
     "googleapis": "^149.0.0",
+    "graphql": "16",
     "jq-web": "^0.6.0",
     "oauth-1.0a": "^2.2.6",
     "openapi-fetch": "^0.13.0"

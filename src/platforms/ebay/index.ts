@@ -1,366 +1,265 @@
 /**
- * eBay. Two APIs, two auth paths, one command surface.
+ * eBay, generated. Every operation comes from eBay's own published descriptions,
+ * pulled by `social specs pull ebay` (never committed):
  *
- *   Trading API (XML, legacy)  ← Auth'n'Auth token. One token pasted once, no redirect
- *     server, works from a laptop. Covers listing (AddFixedPriceItem), revising, picture
- *     upload to eBay's host, My eBay, messages, Best Offers. (Its category and
- *     item-specifics calls were retired by eBay: HTTP 410. Those now use the Taxonomy
- *     REST API with an app-only token, still no user sign-in or redirect server.)
- *     This is the everyday path for local use.
- *   Sell REST APIs (JSON)      ← OAuth 2.0 user token. Needs an app + a RuName redirect,
- *     served here over https://localhost:8888 with a self-signed cert. Covers Inventory,
- *     Marketing, Fulfillment, Account, Negotiation. Use for what Trading cannot do.
+ *   REST     one OpenAPI 3 document per API (Inventory, Fulfillment, Account, Finances,
+ *            Media, Message, Post-Order, Taxonomy, Marketing…), developer.ebay.com/develop/api/spec/<api>.json
+ *   GraphQL  one schema for the modernized APIs (Listing, offers, orders, returns,
+ *            inquiries…), served at https://graphqlapi.ebay.com/graphql
  *
- * Both are reachable generically: `social ebay api <CallName> …` (Trading) and
- * `social api ebay <path> …` (REST). The curated commands wrap the calls you use daily.
+ * build-index.ts indexes them; ops.ts calls them. This file only holds auth and the
+ * command surface: `ops` / `describe` to discover, `call` / `gql` to run.
  *
- * Spec: eBay publishes OpenAPI 3 contracts per Sell API, but developer.ebay.com serves
- * 403 to non-browser fetches, so they are vendored by hand under specs/ebay/ when needed.
+ * Auth: OAuth user token (`social auth login ebay`, a RuName whose accept URL is
+ * https://localhost:8888/callback) for seller operations; an app token (client
+ * credentials, no sign-in) for the operations whose spec allows only that. The legacy
+ * Trading API (Auth'n'Auth token) stays reachable as `social ebay trading <Call>`.
  */
 import type { Command } from "commander"
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
-import { tmpdir } from "node:os"
+import { readFileSync } from "node:fs"
 import type { Platform } from "../../core/platform.ts"
 import { makeHttp, ApiError, type Http } from "../../core/http.ts"
+import { browserConsent } from "../../core/oauth.ts"
 import * as config from "../../core/config.ts"
 import { emit, note } from "../../core/output.ts"
+import { coerce, kv, io } from "../../commands/api.ts"
+import { Generated, registerGenerated } from "../../core/openapi.ts"
+import { INDEX_FILE } from "./build-index.ts"
+import * as ops from "./ops.ts"
 
-const TRADING_VERSION = "1349"
-const SITE_IDS: Record<string, string> = { EBAY_US: "0", EBAY_GB: "3", EBAY_AU: "15", EBAY_DE: "77", EBAY_CA: "2" }
-const CURRENCY: Record<string, string> = { EBAY_US: "USD", EBAY_GB: "GBP", EBAY_AU: "AUD", EBAY_DE: "EUR", EBAY_CA: "CAD" }
+const CONTENT_LANGUAGE: Record<string, string> = { EBAY_US: "en-US", EBAY_GB: "en-GB", EBAY_AU: "en-AU", EBAY_DE: "de-DE", EBAY_CA: "en-CA" }
+const API_SCOPE = "https://api.ebay.com/oauth/api_scope"
+const S = (s: string) => `${API_SCOPE}/${s}`
+// The Authorization Code scopes granted to this app (developer.ebay.com/my/keys → OAuth Scopes),
+// read and write both, since GraphQL fields check either. Asking for one not granted fails the
+// whole sign-in with invalid_scope (sell.negotiation is the known absentee). Refresh keeps
+// whatever the sign-in got, so changing this list only takes effect at the next `auth login`.
 const OAUTH_SCOPES = [
-  "https://api.ebay.com/oauth/api_scope",
-  "https://api.ebay.com/oauth/api_scope/sell.inventory",
-  "https://api.ebay.com/oauth/api_scope/sell.marketing",
-  "https://api.ebay.com/oauth/api_scope/sell.account",
-  "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
-  "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
-  "https://api.ebay.com/oauth/api_scope/sell.negotiation",
+  API_SCOPE,
+  ...["sell.marketing", "sell.marketing.readonly", "sell.inventory", "sell.inventory.readonly", "sell.account", "sell.account.readonly",
+    "sell.fulfillment", "sell.fulfillment.readonly", "sell.analytics.readonly", "sell.finances", "sell.payment.dispute",
+    "commerce.identity.readonly", "sell.reputation", "sell.reputation.readonly", "commerce.notification.subscription",
+    "commerce.notification.subscription.readonly", "sell.stores", "sell.stores.readonly", "commerce.vero", "sell.inventory.mapping",
+    "commerce.message", "commerce.feedback", "commerce.shipping", "sell.listing", "sell.listing.read", "sell.cancellation.read",
+    "sell.cancellation", "sell.return.read", "sell.return", "sell.inquiry", "sell.inquiry.read", "commerce.post_order.document",
+    "sell.offer", "commerce.catalog.readonly", "commerce.usernote", "sell.auction", "sell.auction.read", "sell.commitment",
+    "sell.commitment.read", "sell.offer.read", "sell.order", "sell.order.read", "sell.purchase.quote", "sell.purchase.quote.read",
+    "sell.refund.read", "sell.resolution.read", "sell.return.preference"].map(S),
+  "https://api.ebay.com/oauth/scope/sell.edelivery",
 ]
+// What sign-ins before 2026-10-28 asked for; tokens stored then don't record their scopes.
+const FIRST_SCOPES = [API_SCOPE, ...["sell.inventory", "sell.marketing", "sell.account", "sell.fulfillment", "sell.analytics.readonly", "sell.finances", "sell.listing", "sell.offer", "sell.order", "sell.return", "sell.cancellation", "sell.inquiry", "sell.reputation", "commerce.identity.readonly", "commerce.message", "commerce.feedback"].map(S)]
 
 async function sandbox() { return ["1", "true", "yes"].includes((await config.get("EBAY_SANDBOX") ?? "").toLowerCase()) }
 async function apiBase() { return (await sandbox()) ? "https://api.sandbox.ebay.com" : "https://api.ebay.com" }
 async function authBase() { return (await sandbox()) ? "https://auth.sandbox.ebay.com" : "https://auth.ebay.com" }
 async function marketplace() { return (await config.get("EBAY_MARKETPLACE")) ?? "EBAY_AU" }
 
-// ---------- Trading (Auth'n'Auth) ----------
+// ---------- Trading (Auth'n'Auth, legacy) ----------
 
-export const xml = {
+const TRADING_VERSION = "1349"
+const SITE_IDS: Record<string, string> = { EBAY_US: "0", EBAY_GB: "3", EBAY_AU: "15", EBAY_DE: "77", EBAY_CA: "2" }
+const xml = {
   esc: (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"),
   // Tags may carry attributes (<CurrentPrice currencyID="AUD">599.0</CurrentPrice>), so match `<Tag` + optional attrs.
   get: (text: string, tag: string) => text.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`))?.[1] ?? "",
   all: (text: string, tag: string) => [...text.matchAll(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, "g"))].map((m) => m[1]),
-  attr: (text: string, tag: string, attr: string) => text.match(new RegExp(`<${tag}\\s[^>]*\\b${attr}="([^"]*)"`))?.[1] ?? "",
 }
 
 export async function trading(callName: string, body: string, opts: { site?: string } = {}): Promise<string> {
-  const { EBAY_AUTH_TOKEN } = await config.require(["EBAY_AUTH_TOKEN"], "Get a User Token (Auth'n'Auth) at https://developer.ebay.com/my/auth?env=production&index=0&auth_type=auth. Nothing else is needed for the Trading API.")
+  const { EBAY_AUTH_TOKEN } = await config.require(["EBAY_AUTH_TOKEN"], "Get a User Token (Auth'n'Auth) at https://developer.ebay.com/my/auth?env=production&index=0&auth_type=auth. Only the legacy Trading API needs it.")
   const site = opts.site ?? SITE_IDS[await marketplace()] ?? "0"
-  const http = makeHttp({ baseUrl: (await apiBase()) + "/ws" })
+  const http = makeHttp({ baseUrl: (await apiBase()) + "/ws", allowHost: ops.isEbayHost })
   const req = `<?xml version="1.0" encoding="utf-8"?>\n<${callName}Request xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>${xml.esc(EBAY_AUTH_TOKEN)}</eBayAuthToken></RequesterCredentials>${body}</${callName}Request>`
   const text = await http.request<string>({
     method: "POST", path: "api.dll", raw: true, body: req,
     headers: { "content-type": "text/xml", "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_VERSION, "X-EBAY-API-CALL-NAME": callName, "X-EBAY-API-SITEID": site },
   })
-  const ack = xml.get(text, "Ack")
-  if (ack === "Failure") {
+  if (xml.get(text, "Ack") === "Failure") {
     const errs = xml.all(text, "Errors").map((e) => `${xml.get(e, "ErrorCode")}: ${xml.get(e, "LongMessage") || xml.get(e, "ShortMessage")}`)
     throw new ApiError(200, `Trading ${callName} failed:\n${errs.join("\n")}`, "api.dll", "POST")
   }
   return text
 }
 
-/** Upload a local image to eBay's picture host; returns the hosted URL. Trading-only capability. */
-export async function uploadPicture(file: string): Promise<string> {
-  const bytes = new Uint8Array(await Bun.file(file).arrayBuffer())
-  const { EBAY_AUTH_TOKEN } = await config.require(["EBAY_AUTH_TOKEN"], "UploadSiteHostedPictures needs an Auth'n'Auth token.")
-  const boundary = "----social" + Date.now()
-  const xmlPart = `<?xml version="1.0" encoding="utf-8"?><UploadSiteHostedPicturesRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>${xml.esc(EBAY_AUTH_TOKEN)}</eBayAuthToken></RequesterCredentials><PictureName>${xml.esc(file.split("/").pop())}</PictureName><PictureSet>Supersize</PictureSet></UploadSiteHostedPicturesRequest>`
-  const enc = new TextEncoder()
-  const parts = [
-    enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="XML Payload"\r\nContent-Type: text/xml; charset=utf-8\r\n\r\n${xmlPart}\r\n`),
-    enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="dummy"; filename="${file.split("/").pop()}"\r\nContent-Type: application/octet-stream\r\nContent-Transfer-Encoding: binary\r\n\r\n`),
-    bytes,
-    enc.encode(`\r\n--${boundary}--\r\n`),
-  ]
-  const body = new Blob(parts as BlobPart[])
-  const http = makeHttp({ baseUrl: (await apiBase()) + "/ws" })
-  const text = await http.request<string>({
-    method: "POST", path: "api.dll", raw: true, body,
-    headers: { "content-type": `multipart/form-data; boundary=${boundary}`, "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_VERSION, "X-EBAY-API-CALL-NAME": "UploadSiteHostedPictures", "X-EBAY-API-SITEID": "0" },
-  })
-  if (xml.get(text, "Ack") === "Failure") throw new Error(`UploadSiteHostedPictures failed: ${xml.get(text, "LongMessage")}`)
-  return xml.get(text, "FullURL")
-}
+// ---------- OAuth ----------
 
-// ---------- REST (OAuth) ----------
-
-interface Tokens { access_token: string; refresh_token: string; expires_at: number; refresh_expires_at: number }
+interface StoredTokens { access_token: string; refresh_token: string; expires_at: number; refresh_expires_at: number; scopes?: string[] }
 
 async function oauthEnv() {
   return config.require(["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_RUNAME"], "Create an app at https://developer.ebay.com/my/keys, add a RuName whose accept URL is https://localhost:8888/callback, then `social auth login ebay`.")
 }
 function basic(id: string, secret: string) { return "Basic " + Buffer.from(`${id}:${secret}`).toString("base64") }
 
-async function tokenRequest(form: Record<string, string>): Promise<Tokens> {
-  const e = await oauthEnv()
-  const http = makeHttp({ baseUrl: await apiBase() })
-  const r = await http.request<any>({ method: "POST", path: "identity/v1/oauth2/token", form, headers: { authorization: basic(e.EBAY_CLIENT_ID, e.EBAY_CLIENT_SECRET) } })
+/** POST to the token endpoint. Sent even under --dry-run: it changes nothing remote, and a faked reply would erase the stored token. */
+async function tokenEndpoint(form: Record<string, string>): Promise<any> {
+  const e = await config.require(["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"], "eBay operations need your app's client id and secret from https://developer.ebay.com/my/keys.")
+  const http = makeHttp({ baseUrl: await apiBase(), allowHost: ops.isEbayHost })
+  const r = await http.request<any>({ method: "POST", path: "identity/v1/oauth2/token", form, headers: { authorization: basic(e.EBAY_CLIENT_ID, e.EBAY_CLIENT_SECRET) }, noDryRun: true })
+  if (!r?.access_token) throw new Error(`eBay's token endpoint returned no access_token: ${JSON.stringify(r).slice(0, 300)}`)
+  return r
+}
+
+async function userTokenRequest(form: Record<string, string>, scopes?: string[]): Promise<StoredTokens> {
+  const r = await tokenEndpoint(form)
   const now = Date.now()
-  const prev = (config.readState<any>().ebay_tokens ?? {}) as Partial<Tokens>
-  const t: Tokens = {
+  const prev = (config.readState<any>().ebay_tokens ?? {}) as Partial<StoredTokens>
+  const t: StoredTokens = {
     access_token: r.access_token,
     refresh_token: r.refresh_token ?? prev.refresh_token!,
     expires_at: now + (r.expires_in ?? 7200) * 1000,
     refresh_expires_at: r.refresh_token_expires_in ? now + r.refresh_token_expires_in * 1000 : prev.refresh_expires_at ?? 0,
+    scopes: scopes ?? prev.scopes,
   }
   config.writeState({ ebay_tokens: t })
   return t
 }
 
-async function accessToken(): Promise<string> {
-  let t = config.readState<any>().ebay_tokens as Tokens | undefined
-  if (!t) throw new Error("No eBay OAuth tokens stored. Run `social auth login ebay` (needs EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, EBAY_RUNAME).")
-  if (Date.now() > t.expires_at - 60_000) {
+async function userToken(force = false): Promise<string> {
+  let t = config.readState<any>().ebay_tokens as StoredTokens | undefined
+  if (!t) throw new Error("No eBay sign-in stored. Run `social auth login ebay` (needs EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, EBAY_RUNAME).")
+  if (force || Date.now() > t.expires_at - 60_000) {
     if (Date.now() > t.refresh_expires_at) throw new Error("eBay refresh token expired; run `social auth login ebay` again.")
-    const e = await oauthEnv()
-    t = await tokenRequest({ grant_type: "refresh_token", refresh_token: t.refresh_token, scope: OAUTH_SCOPES.join(" ") })
-    void e
+    // No scope parameter: eBay then keeps exactly what the sign-in granted (verified 2026-10-28).
+    t = await userTokenRequest({ grant_type: "refresh_token", refresh_token: t.refresh_token })
   }
   return t.access_token
 }
 
-/**
- * App-only token (client credentials). Enough for the Commerce Taxonomy API, which
- * replaced the retired Trading category calls. Needs only EBAY_CLIENT_ID/SECRET;
- * no RuName, no browser, no redirect server.
- */
-async function appToken(): Promise<string> {
-  const st = config.readState<any>().ebay_app_token as { access_token: string; expires_at: number } | undefined
-  if (st && Date.now() < st.expires_at - 60_000) return st.access_token
-  const e = await config.require(["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"], "Category lookups use the Taxonomy API, which needs your app's client id and secret from https://developer.ebay.com/my/keys (no user sign-in required).")
-  const http = makeHttp({ baseUrl: await apiBase() })
-  const r = await http.request<any>({ method: "POST", path: "identity/v1/oauth2/token", form: { grant_type: "client_credentials", scope: "https://api.ebay.com/oauth/api_scope" }, headers: { authorization: basic(e.EBAY_CLIENT_ID, e.EBAY_CLIENT_SECRET) } })
-  config.writeState({ ebay_app_token: { access_token: r.access_token, expires_at: Date.now() + (r.expires_in ?? 7200) * 1000 } })
+/** The scopes the stored sign-in holds, which decide the GraphQL fields a default selection may ask for. */
+function grantedScopes(): string[] { return (config.readState<any>().ebay_tokens as StoredTokens | undefined)?.scopes ?? FIRST_SCOPES }
+
+/** App-only token (client credentials) for the op's scopes, cached per scope set: no RuName, no browser. */
+async function appToken(scopes: string[]): Promise<string> {
+  const want = scopes.length ? [...scopes].sort() : [API_SCOPE]
+  const key = want.join(" ")
+  const all = (config.readState<any>().ebay_app_tokens ?? {}) as Record<string, { access_token: string; expires_at: number }>
+  if (all[key] && Date.now() < all[key].expires_at - 60_000) return all[key].access_token
+  const r = await tokenEndpoint({ grant_type: "client_credentials", scope: key })
+  config.writeState({ ebay_app_tokens: { ...all, [key]: { access_token: r.access_token, expires_at: Date.now() + (r.expires_in ?? 7200) * 1000 } } })
   return r.access_token
 }
 
-const TREE_IDS: Record<string, string> = { EBAY_US: "0", EBAY_GB: "3", EBAY_AU: "15", EBAY_DE: "77", EBAY_CA: "2" }
-
-async function taxonomy(): Promise<Http> {
-  return makeHttp({ baseUrl: (await apiBase()) + "/commerce/taxonomy/v1", headers: async () => ({ authorization: `Bearer ${await appToken()}`, accept: "application/json" }) })
+async function context(): Promise<ops.CallContext> {
+  const mp = await marketplace()
+  return { tokens: { user: userToken, app: appToken }, marketplace: mp, sandbox: await sandbox(), contentLanguage: CONTENT_LANGUAGE[mp] ?? "en-US", granted: grantedScopes() }
 }
 
+/** For `social api ebay <path|url>`: raw REST with the user token, to eBay hosts only. Prefer `social ebay call`. */
 export async function rest(): Promise<Http> {
   const mp = await marketplace()
+  let force = false
   return makeHttp({
-    baseUrl: await apiBase(),
-    headers: async () => ({ authorization: `Bearer ${await accessToken()}`, accept: "application/json", "X-EBAY-C-MARKETPLACE-ID": mp, "content-language": "en-AU" }),
+    baseUrl: await apiBase(), allowHost: ops.isEbayHost,
+    headers: async () => ({ authorization: `Bearer ${await userToken(force)}`, accept: "application/json", "X-EBAY-C-MARKETPLACE-ID": mp, "content-language": CONTENT_LANGUAGE[mp] ?? "en-US" }),
+    onUnauthorized: async () => (!force ? (force = true) : false),
   })
 }
 
 async function oauthLogin(): Promise<void> {
   const e = await oauthEnv()
-  const dir = mkdtempSync(join(tmpdir(), "social-ebay-"))
-  const key = join(dir, "key.pem"), cert = join(dir, "cert.pem")
-  const gen = Bun.spawnSync(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-keyout", key, "-out", cert, "-days", "1", "-nodes", "-subj", "/CN=localhost"])
-  if (gen.exitCode !== 0) throw new Error("openssl is needed to serve the https://localhost:8888 callback")
-  let resolveCode!: (c: string) => void
-  const code = new Promise<string>((r) => (resolveCode = r))
-  const server = Bun.serve({
-    port: 8888, hostname: "localhost", tls: { key: Bun.file(key), cert: Bun.file(cert) },
-    fetch(req) {
-      const u = new URL(req.url)
-      const c = u.searchParams.get("code")
-      if (c) { resolveCode(c); return new Response("<h1>Authorised. You can close this tab.</h1>", { headers: { "content-type": "text/html" } }) }
-      return new Response(`<h1>Authorisation failed: ${u.searchParams.get("error") ?? "unknown"}</h1>`, { status: 400, headers: { "content-type": "text/html" } })
-    },
+  const authBaseUrl = await authBase()
+  // eBay redirects to the RuName's accept URL, which must be this address.
+  const c = await browserConsent({
+    listen: "https://localhost:8888/callback", what: "eBay",
+    consentUrl: (state) => `${authBaseUrl}/oauth2/authorize?client_id=${encodeURIComponent(e.EBAY_CLIENT_ID)}&redirect_uri=${encodeURIComponent(e.EBAY_RUNAME)}&response_type=code&state=${state}&scope=${encodeURIComponent(OAUTH_SCOPES.join(" "))}`,
   })
-  const url = `${await authBase()}/oauth2/authorize?client_id=${encodeURIComponent(e.EBAY_CLIENT_ID)}&redirect_uri=${encodeURIComponent(e.EBAY_RUNAME)}&response_type=code&scope=${encodeURIComponent(OAUTH_SCOPES.join(" "))}`
-  note(`Opening the browser for eBay authorisation. Accept the self-signed certificate warning for localhost.\n${url}`)
-  Bun.spawn(["open", url])
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error("timed out waiting for the eBay callback")), 180_000) })
-  const c = await Promise.race([code, timeout]).finally(() => clearTimeout(timer))
-  server.stop(true)
-  const t = await tokenRequest({ grant_type: "authorization_code", code: c, redirect_uri: e.EBAY_RUNAME })
+  const t = await userTokenRequest({ grant_type: "authorization_code", code: c, redirect_uri: e.EBAY_RUNAME }, OAUTH_SCOPES)
   note(`eBay OAuth stored. Access token good for ${Math.round((t.expires_at - Date.now()) / 60000)} min; refresh token ~${Math.round((t.refresh_expires_at - Date.now()) / 86400000)} days.`)
 }
 
-// ---------- listing helpers (Trading) ----------
+// ---------- commands ----------
 
-export const CONDITION_IDS: Record<string, number> = { NEW: 1000, NEW_OTHER: 1500, NEW_WITH_DEFECTS: 1750, CERTIFIED_REFURBISHED: 2000, SELLER_REFURBISHED: 2500, LIKE_NEW: 2750, USED_EXCELLENT: 3000, USED_VERY_GOOD: 4000, USED_GOOD: 5000, USED_ACCEPTABLE: 6000, FOR_PARTS_OR_NOT_WORKING: 7000 }
-
-export interface Listing {
-  title: string; description: string; price: number; currency?: string; categoryId: string
-  condition: keyof typeof CONDITION_IDS; conditionDescription?: string; quantity?: number; sku?: string
-  images: string[]; format?: "FixedPrice" | "Auction"; durationDays?: number
-  postcode: string; location: string; country?: string
-  shipping: { service: string; cost: number; type?: "Flat" | "Calculated" }[]; dispatchDays?: number
-  returns?: { accepted: boolean; days?: number; paidBy?: "Buyer" | "Seller" }
-  specifics?: Record<string, string>; bestOffer?: { enabled: boolean; autoAccept?: number; autoDecline?: number }
-  galleryPlus?: boolean
+function readJson(file: string): unknown { return JSON.parse(file === "-" ? io.stdin() : readFileSync(file, "utf8")) }
+const collect = (v: string, acc: string[] = []) => [...acc, v]
+/** -a values are JSON; anything that looks like JSON but doesn't parse is an error here, not a string sent to eBay. */
+function jsonArg(k: string, v: string): unknown {
+  if (/^\s*[{["]/.test(v)) { try { return JSON.parse(v) } catch (e: any) { throw new Error(`-a ${k}: not valid JSON (${e.message})`) } }
+  return coerce(v)
 }
 
-export function listingXml(l: Listing): string {
-  const e = xml.esc
-  const cur = l.currency ?? "AUD"
-  const pics = l.images.map((u) => `<PictureURL>${e(u)}</PictureURL>`).join("")
-  const ship = l.shipping.map((s, i) => `<ShippingServiceOptions><ShippingServicePriority>${i + 1}</ShippingServicePriority><ShippingService>${e(s.service)}</ShippingService><ShippingServiceCost currencyID="${cur}">${s.cost.toFixed(2)}</ShippingServiceCost></ShippingServiceOptions>`).join("")
-  const specifics = l.specifics ? `<ItemSpecifics>${Object.entries(l.specifics).map(([k, v]) => `<NameValueList><Name>${e(k)}</Name><Value>${e(v)}</Value></NameValueList>`).join("")}</ItemSpecifics>` : ""
-  const returns = l.returns?.accepted
-    ? `<ReturnPolicy><ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption><ReturnsWithinOption>Days_${l.returns.days ?? 30}</ReturnsWithinOption><ShippingCostPaidByOption>${l.returns.paidBy ?? "Buyer"}</ShippingCostPaidByOption></ReturnPolicy>`
-    : `<ReturnPolicy><ReturnsAcceptedOption>ReturnsNotAccepted</ReturnsAcceptedOption></ReturnPolicy>`
-  const bo = l.bestOffer?.enabled ? `<BestOfferDetails><BestOfferEnabled>true</BestOfferEnabled></BestOfferDetails>${l.bestOffer.autoAccept || l.bestOffer.autoDecline ? `<ListingDetails>${l.bestOffer.autoAccept ? `<BestOfferAutoAcceptPrice currencyID="${cur}">${l.bestOffer.autoAccept.toFixed(2)}</BestOfferAutoAcceptPrice>` : ""}${l.bestOffer.autoDecline ? `<MinimumBestOfferPrice currencyID="${cur}">${l.bestOffer.autoDecline.toFixed(2)}</MinimumBestOfferPrice>` : ""}</ListingDetails>` : ""}` : ""
-  const isAuction = l.format === "Auction"
-  return `<Item>
-<Title>${e(l.title)}</Title><Description><![CDATA[${l.description}]]></Description>
-<PrimaryCategory><CategoryID>${e(l.categoryId)}</CategoryID></PrimaryCategory>
-<${isAuction ? "StartPrice" : "StartPrice"} currencyID="${cur}">${l.price.toFixed(2)}</StartPrice>
-<ConditionID>${CONDITION_IDS[l.condition]}</ConditionID>${l.conditionDescription ? `<ConditionDescription>${e(l.conditionDescription)}</ConditionDescription>` : ""}
-<Country>${l.country ?? "AU"}</Country><Currency>${cur}</Currency>
-<DispatchTimeMax>${l.dispatchDays ?? 3}</DispatchTimeMax>
-<ListingDuration>${isAuction ? `Days_${l.durationDays ?? 7}` : "GTC"}</ListingDuration>
-<ListingType>${isAuction ? "Chinese" : "FixedPriceItem"}</ListingType>
-<Location>${e(l.location)}</Location><PostalCode>${e(l.postcode)}</PostalCode>
-<PictureDetails>${l.galleryPlus ? "<GalleryType>Plus</GalleryType>" : ""}${pics}</PictureDetails>
-<Quantity>${l.quantity ?? 1}</Quantity>${l.sku ? `<SKU>${e(l.sku)}</SKU>` : ""}
-${returns}
-<ShippingDetails><ShippingType>${l.shipping[0]?.type ?? "Flat"}</ShippingType>${ship}</ShippingDetails>
-${specifics}${bo}
-</Item>`
+/** The generated surface for commands: auth and defaults come from the configured context per call. */
+function generated() {
+  return new Generated<ops.Op>({ name: "ebay", indexFile: INDEX_FILE, client: async (op, base) => ops.client(await context())(op, base), defaults: async () => ops.defaults(await context()) })
 }
-
-async function resolveImages(images: string[]): Promise<string[]> {
-  const out: string[] = []
-  for (const i of images) {
-    if (/^https?:\/\//.test(i)) out.push(i)
-    else if (existsSync(i)) { note(`uploading ${i} to eBay's picture host`); out.push(await uploadPicture(i)) }
-    else throw new Error(`image not found: ${i}`)
-  }
-  return out
-}
-
-// ---------- platform ----------
 
 export const ebay: Platform = {
   name: "ebay",
-  summary: "eBay: list, revise, messages, offers, categories (Trading, Auth'n'Auth) and any Sell REST API (OAuth)",
-  spec: { kind: "openapi", source: "https://developer.ebay.com/api-docs/master/sell/inventory/openapi/3/sell_inventory_v1_oas3.json (vendored: the host blocks non-browser fetches)" },
-  credentials: { keys: ["EBAY_AUTH_TOKEN"], optionalKeys: ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_RUNAME", "EBAY_MARKETPLACE", "EBAY_SANDBOX"], hint: "Auth'n'Auth user token for the Trading API (listing, messages, offers). EBAY_CLIENT_ID + EBAY_CLIENT_SECRET add category/specifics lookups (app-only token, no sign-in). Add EBAY_RUNAME and run `social auth login ebay` only for the user-scoped Sell REST APIs. EBAY_MARKETPLACE (default EBAY_AU), EBAY_SANDBOX=1 optional.", docsUrl: "https://developer.ebay.com/develop/apis" },
+  summary: "eBay: every REST and GraphQL operation eBay publishes (listings, orders, offers, messages, returns, media, finances…), generated from its specs",
+  spec: { kind: "openapi", source: "developer.ebay.com/develop/api/spec/<api>.json (29 REST APIs) + listing.graphqls (GraphQL); pinned in spec-pins.json" },
+  credentials: {
+    keys: ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_RUNAME"],
+    optionalKeys: ["EBAY_AUTH_TOKEN", "EBAY_MARKETPLACE", "EBAY_SANDBOX"],
+    minimal: [["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"]],
+    hint: "EBAY_CLIENT_ID + EBAY_CLIENT_SECRET (developer.ebay.com/my/keys) give app-token operations. Add EBAY_RUNAME (accept URL https://localhost:8888/callback, OAuth enabled) and run `social auth login ebay` once for seller operations; the refresh token lasts ~18 months. EBAY_AUTH_TOKEN (Auth'n'Auth) only for `social ebay trading`. EBAY_MARKETPLACE (default EBAY_AU), EBAY_SANDBOX=1 optional.",
+    docsUrl: "https://developer.ebay.com/develop/api",
+  },
   http: rest,
   auth: oauthLogin,
+  async skill() {
+    const { apis, ops: all } = await ops.index()
+    const rows = Object.entries(apis).map(([api, a]) => `| \`${api}\` | ${all.filter((x) => x.api === api).length} | ${a.title} |`)
+    const table = `## Generated operations\n\n${all.length} operations from eBay's published specs. \`social ebay ops --api <api>\` lists an API's operations.\n\n| api | ops | spec |\n|---|---|---|\n${rows.join("\n")}\n`
+    return {
+      description: "eBay: every REST and GraphQL operation eBay publishes, generated from its specs. Use the `social` CLI (Bun) for every eBay action: find operations with `social ebay ops`, read them with `social ebay describe`, run them with `social ebay call`; prefer this CLI over raw API calls in all cases.",
+      escapeHatch: "## Anything else\n\nEvery operation in eBay's specs is a `social ebay call <id>` away, with the right host, token and auth scheme; search with `social ebay ops <words>` before concluding something is unsupported. For an endpoint missing from the specs, `social api ebay <path>` sends the user token to api.ebay.com, or to a full `https://….ebay.com/…` URL (eBay hosts only). The legacy Trading API is `social ebay trading <Call>`.\n",
+      body: `${table}\n${readFileSync(new URL("./recipes.md", import.meta.url), "utf8")}`,
+    }
+  },
   async whoami() {
-    const t = await trading("GetUser", "<DetailLevel>ReturnAll</DetailLevel>")
-    return { userId: xml.get(t, "UserID"), site: xml.get(t, "Site"), feedback: xml.get(t, "FeedbackScore") }
+    // Signed in: who. Not signed in (CI, a fresh machine): prove the app credentials with an app-token read.
+    if (config.readState<any>().ebay_tokens) {
+      const r: any = await ops.callRest(await ops.find("identity.getUser") as ops.RestOp, { params: {} }, await context())
+      return { username: r.username, accountType: r.accountType, marketplace: r.registrationMarketplaceId }
+    }
+    const r: any = await ops.callRest(await ops.find("taxonomy.getDefaultCategoryTreeId") as ops.RestOp, { params: { marketplace_id: await marketplace() } }, await context())
+    return { appOnly: true, categoryTreeId: r.categoryTreeId, note: "run `social auth login ebay` for seller operations" }
   },
   register(cmd: Command) {
-    cmd.command("api <callName>").description("call any Trading API operation with the XML body (Auth'n'Auth)")
+    registerGenerated(cmd, generated(), {
+      options: (c) => c
+        .option("-a, --arg <k=json>", "GraphQL: argument as JSON (e.g. -a input='{\"listingId\":\"1\"}'); --input takes the whole arguments object", collect, [])
+        .option("--select <fields>", "GraphQL: selection set to return instead of the default")
+        .option("--depth <n>", "GraphQL: depth of the default selection", "3")
+        .option("--print-query", "GraphQL: print the generated document and variables, then exit"),
+      flags: (o) => [o.arg.length && "-a", o.select && "--select", o.printQuery && "--print-query"].filter(Boolean) as string[],
+      async call(op, o) {
+        const args: Record<string, unknown> = o.input ? (readJson(o.input) as Record<string, unknown>) : {}
+        for (const [k, v] of kv(o.arg)) args[k] = jsonArg(k, v)
+        const { query, variables, operationName } = await ops.buildGql(op as ops.GqlOp, args, { select: o.select, depth: Number(o.depth), granted: grantedScopes() })
+        if (o.printQuery) { process.stdout.write(`${query}\n${JSON.stringify(variables, null, 2)}\n`); return }
+        await emit(await ops.callGql(query, variables, await context(), operationName), { json: true, jq: o.jq })
+      },
+      describe: (op, o) => ops.describe(op as ops.Op, { ...o, granted: grantedScopes() }),
+    })
+
+    cmd.command("gql <query>").description("run a GraphQL document against eBay (a string, @file.graphql, or - for stdin); document and variables are checked against the schema first")
+      .option("-v, --var <k=json>", "variable, JSON-typed", collect, [])
+      .option("--variables <file>", "variables object from a JSON file")
+      .option("--operation <name>", "which operation to run when the document has several")
+      .option("--json").option("--jq <e>")
+      .action(async (q: string, o) => {
+        const query = q === "-" ? io.stdin() : q.startsWith("@") ? readFileSync(q.slice(1), "utf8") : q
+        const variables: Record<string, unknown> = o.variables ? (readJson(o.variables) as Record<string, unknown>) : {}
+        for (const [k, v] of kv(o.var)) variables[k] = jsonArg(k, v)
+        await emit(await ops.callGql(query, variables, await context(), o.operation), { json: true, jq: o.jq })
+      })
+
+    cmd.command("trading <callName>").description("legacy Trading API call with an XML body (Auth'n'Auth), for what the modern APIs lack (e.g. WatchCount)")
       .option("--body <xml>", "XML body inside the <CallName>Request element", "")
       .option("--input <file>", "read the XML body from a file or - for stdin")
       .option("--site <id>", "eBay site id (default from EBAY_MARKETPLACE)")
-      .option("--json", "print a JSON summary (Ack, Errors, Timestamp) instead of raw XML")
+      .option("--json", "print a JSON summary (Ack, Timestamp) with the raw XML")
       .option("--jq <e>")
       .action(async (callName, o) => {
-        const body = o.input ? (o.input === "-" ? await Bun.stdin.text() : await Bun.file(o.input).text()) : o.body
+        const body = o.input ? (o.input === "-" ? io.stdin() : readFileSync(o.input, "utf8")) : o.body
         const text = await trading(callName, body, { site: o.site })
         if (o.json || o.jq) await emit({ ack: xml.get(text, "Ack"), timestamp: xml.get(text, "Timestamp"), xml: text }, o)
         else process.stdout.write(text + "\n")
       })
 
-    cmd.command("me").description("the authenticated seller (GetUser)").option("--json").action(async (o) => { await emit(await ebay.whoami!(), o, (d) => `${d.userId}  site ${d.site}  feedback ${d.feedback}`) })
-
-    cmd.command("selling").description("your active listings (GetMyeBaySelling)").option("-n, --max <n>", "per page", "50").option("--json").option("--jq <e>")
-      .action(async (o) => {
-        // Sold/Unsold lists come back unless excluded, and their <Item>s would read as active — scope to <ActiveList>.
-        const t = await trading("GetMyeBaySelling", `<ActiveList><Include>true</Include><Pagination><EntriesPerPage>${Number(o.max)}</EntriesPerPage></Pagination></ActiveList><SoldList><Include>false</Include></SoldList><UnsoldList><Include>false</Include></UnsoldList><DetailLevel>ReturnAll</DetailLevel>`)
-        const items = xml.all(xml.get(t, "ActiveList"), "Item").map((i) => ({ itemId: xml.get(i, "ItemID"), title: xml.get(i, "Title"), price: xml.get(i, "CurrentPrice"), quantity: xml.get(i, "QuantityAvailable") || xml.get(i, "Quantity"), watchers: xml.get(i, "WatchCount"), url: xml.get(i, "ViewItemURL") }))
-        await emit(items, o, (d) => d.map((i: any) => `${i.itemId}  ${i.price.padStart(8)}  ${i.title}`).join("\n") || "(no active listings)")
-      })
-
-    cmd.command("item <itemId>").description("one listing in full (GetItem)").option("--json").option("--jq <e>").action(async (id, o) => {
-      const t = await trading("GetItem", `<ItemID>${xml.esc(id)}</ItemID><DetailLevel>ReturnAll</DetailLevel>`)
-      await emit({ itemId: id, title: xml.get(t, "Title"), price: xml.get(t, "CurrentPrice"), quantity: xml.get(t, "Quantity"), sold: xml.get(t, "QuantitySold"), condition: xml.get(t, "ConditionDisplayName"), url: xml.get(t, "ViewItemURL"), xml: t }, o, (d) => `${d.title}\n${d.price}  qty ${d.quantity} sold ${d.sold}  ${d.condition}\n${d.url}`)
-    })
-
-    cmd.command("messages").description("recent buyer messages (GetMyMessages)").option("--days <n>", "look back", "7").option("--json").option("--jq <e>").action(async (o) => {
-      const since = new Date(Date.now() - Number(o.days) * 86400000).toISOString()
-      const t = await trading("GetMyMessages", `<DetailLevel>ReturnHeaders</DetailLevel><StartTime>${since}</StartTime>`)
-      const msgs = xml.all(t, "Message").map((m) => ({ id: xml.get(m, "MessageID"), from: xml.get(m, "Sender"), subject: xml.get(m, "Subject"), received: xml.get(m, "ReceiveDate"), read: xml.get(m, "Read") === "true", itemId: xml.get(m, "ItemID") }))
-      await emit(msgs, o, (d) => d.map((m: any) => `${m.read ? " " : "*"} ${m.received.slice(0, 10)}  ${m.from.padEnd(18)}  ${m.subject}`).join("\n") || "(no messages)")
-    })
-
-    cmd.command("offers").description("pending Best Offers on your listings (GetBestOffers)").option("--item <id>", "only this item").option("--json").option("--jq <e>").action(async (o) => {
-      const t = await trading("GetBestOffers", `${o.item ? `<ItemID>${xml.esc(o.item)}</ItemID>` : ""}<BestOfferStatus>Active</BestOfferStatus><DetailLevel>ReturnAll</DetailLevel>`)
-      const offers = xml.all(t, "ItemBestOffers").flatMap((blk) => { const itemId = xml.get(blk, "ItemID"); return xml.all(blk, "BestOffer").map((b) => ({ offerId: xml.get(b, "BestOfferID"), itemId, price: xml.get(b, "Price"), buyer: xml.get(b, "UserID"), quantity: xml.get(b, "Quantity"), message: xml.get(b, "BuyerMessage"), expires: xml.get(b, "ExpirationTime") })) })
-      await emit(offers, o, (d) => d.map((x: any) => `${x.offerId}  ${x.price}  ${x.buyer}  ${x.message}`).join("\n") || "(no offers)")
-    })
-
-    cmd.command("respond <itemId> <offerId> <action>").description("accept | decline | counter a Best Offer").option("--counter <price>").option("--message <text>").option("--json").action(async (itemId, offerId, action, o) => {
-      const a = { accept: "Accept", decline: "Decline", counter: "Counter" }[action as string]
-      if (!a) throw new Error("action must be accept, decline or counter")
-      if (a === "Counter" && !o.counter) throw new Error("--counter <price> is required for counter")
-      const cur = CURRENCY[await marketplace()] ?? "USD"
-      const body = `<ItemID>${xml.esc(itemId)}</ItemID><BestOfferID>${xml.esc(offerId)}</BestOfferID><Action>${a}</Action>${o.counter ? `<CounterOfferPrice currencyID="${cur}">${Number(o.counter).toFixed(2)}</CounterOfferPrice><CounterOfferQuantity>1</CounterOfferQuantity>` : ""}${o.message ? `<SellerResponse>${xml.esc(o.message)}</SellerResponse>` : ""}`
-      const t = await trading("RespondToBestOffer", body)
-      await emit({ ack: xml.get(t, "Ack") }, o, (d) => `${a}: ${d.ack}`)
-    })
-
-    // GetCategories / GetCategorySpecifics / GetSuggestedCategories return HTTP 410 from the
-    // Trading API (verified 2026-09-18). The Commerce Taxonomy API replaces them.
-    cmd.command("categories <query>").description("suggest leaf categories for a listing title (Taxonomy getCategorySuggestions)").option("--json").option("--jq <e>").action(async (query, o) => {
-      const t = await taxonomy(); const tree = TREE_IDS[await marketplace()] ?? "0"
-      const r = await t.request<any>({ path: `category_tree/${tree}/get_category_suggestions`, query: { q: query } })
-      const hits = (r.categorySuggestions ?? []).map((c: any) => ({ id: c.category.categoryId, name: c.category.categoryName, path: [...(c.categoryTreeNodeAncestors ?? [])].reverse().map((a: any) => a.categoryName).concat(c.category.categoryName).join(" > "), relevancy: c.relevancy }))
-      await emit(hits, o, (d) => d.map((c: any) => `${String(c.id).padStart(7)}  ${c.path}`).join("\n") || "(no suggestions)")
-    })
-
-    cmd.command("specifics <categoryId>").description("required and recommended item specifics for a category (Taxonomy getItemAspectsForCategory)").option("--json").option("--jq <e>").action(async (id, o) => {
-      const t = await taxonomy(); const tree = TREE_IDS[await marketplace()] ?? "0"
-      const r = await t.request<any>({ path: `category_tree/${tree}/get_item_aspects_for_category`, query: { category_id: id } })
-      const names = (r.aspects ?? []).map((a: any) => ({ name: a.localizedAspectName, required: !!a.aspectConstraint?.aspectRequired, mode: a.aspectConstraint?.aspectMode, values: (a.aspectValues ?? []).slice(0, 12).map((v: any) => v.localizedValue) }))
-      await emit(names, o, (d) => d.map((n: any) => `${n.required ? "*" : " "} ${n.name.padEnd(28)} ${n.values.join(", ")}`).join("\n"))
-    })
-
-    cmd.command("list").description("create a listing from a JSON file (see `social ebay list --example`); local image paths are uploaded to eBay")
-      .option("--input <file>", "listing JSON, or - for stdin").option("--verify", "VerifyAddFixedPriceItem only; nothing is created").option("--example", "print an example listing JSON").option("--json")
-      .action(async (o) => {
-        if (o.example) { process.stdout.write(JSON.stringify(EXAMPLE, null, 2) + "\n"); return }
-        if (!o.input) throw new Error("--input <file> is required (or --example)")
-        const l: Listing = JSON.parse(o.input === "-" ? await Bun.stdin.text() : await Bun.file(o.input).text())
-        for (const k of ["title", "description", "price", "categoryId", "condition", "images", "postcode", "location", "shipping"] as const) if (l[k] === undefined) throw new Error(`listing is missing "${k}"`)
-        l.images = await resolveImages(l.images)
-        const call = l.format === "Auction" ? (o.verify ? "VerifyAddItem" : "AddItem") : (o.verify ? "VerifyAddFixedPriceItem" : "AddFixedPriceItem")
-        const t = await trading(call, listingXml(l))
-        // Fees come as <Fee><Name>ListingFee</Name><Fee currencyID="AUD">0.0</Fee></Fee>: pair each Name with the amount that follows it.
-        const fees = [...t.matchAll(/<Name>([^<]+)<\/Name>\s*<Fee currencyID="[A-Z]{3}">([^<]+)<\/Fee>/g)].map((m) => ({ name: m[1], amount: m[2] })).filter((f) => Number(f.amount) > 0)
-        const res = { itemId: xml.get(t, "ItemID"), ack: xml.get(t, "Ack"), fees, url: xml.get(t, "ItemID") ? `https://www.ebay.com.au/itm/${xml.get(t, "ItemID")}` : undefined, warnings: xml.all(t, "Errors").map((e) => xml.get(e, "LongMessage")) }
-        await emit(res, o, (d) => `${o.verify ? "verified" : "listed"}: ${d.ack}${d.itemId ? `  ${d.url}` : ""}\nfees: ${d.fees.map((f: any) => `${f.name} ${f.amount}`).join(", ") || "none"}${d.warnings.length ? "\nwarnings: " + d.warnings.join("; ") : ""}`)
-      })
-
-    cmd.command("revise <itemId>").description("change price and/or quantity on a live listing (ReviseFixedPriceItem)").option("--price <n>").option("--quantity <n>").option("--title <t>").option("--json")
-      .action(async (id, o) => {
-        const fields = [o.price ? `<StartPrice>${Number(o.price).toFixed(2)}</StartPrice>` : "", o.quantity ? `<Quantity>${Number(o.quantity)}</Quantity>` : "", o.title ? `<Title>${xml.esc(o.title)}</Title>` : ""].join("")
-        if (!fields) throw new Error("nothing to revise; pass --price, --quantity or --title")
-        const t = await trading("ReviseFixedPriceItem", `<Item><ItemID>${xml.esc(id)}</ItemID>${fields}</Item>`)
-        await emit({ ack: xml.get(t, "Ack") }, o, (d) => `revised: ${d.ack}`)
-      })
-
-    cmd.command("upload <files...>").description("upload local images to eBay's picture host; prints URLs for listing JSON").option("--json").action(async (files, o) => {
-      const urls: string[] = []; for (const f of files) urls.push(await uploadPicture(f))
-      await emit(urls, o, (d) => d.join("\n"))
+    cmd.command("me").description("the signed-in seller (identity.getUser), or an app-credentials check when not signed in").option("--json").action(async (o) => {
+      await emit(await ebay.whoami!(), o, (d) => d.appOnly ? `app credentials ok (not signed in): ${d.note}` : `${d.username}  ${d.accountType}  ${d.marketplace}`)
     })
   },
-}
-
-const EXAMPLE: Listing = {
-  title: "Sony A7 IV body, boxed, 4,200 shutter count", description: "<p>Excellent condition, from a smoke-free home. Box, strap, charger, two batteries.</p>",
-  price: 2450, currency: "AUD", categoryId: "31388", condition: "USED_EXCELLENT", conditionDescription: "Light wear on the grip; sensor clean.",
-  quantity: 1, sku: "A7IV-01", images: ["./photos/a7iv-front.jpg", "https://example.com/a7iv-back.jpg"], format: "FixedPrice",
-  postcode: "2000", location: "Sydney, NSW", country: "AU",
-  shipping: [{ service: "AU_Regular", cost: 15, type: "Flat" }], dispatchDays: 2,
-  returns: { accepted: true, days: 30, paidBy: "Buyer" },
-  specifics: { Brand: "Sony", Model: "Sony a7 IV", Type: "Mirrorless" },
-  bestOffer: { enabled: true, autoAccept: 2300, autoDecline: 1900 }, galleryPlus: false,
 }

@@ -8,9 +8,10 @@
 import { Command } from "commander"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { PLATFORMS } from "../src/platforms/index.ts"
 
-const ROOT = new URL("..", import.meta.url).pathname
+const ROOT = fileURLToPath(new URL("..", import.meta.url))
 const verify = process.argv.includes("--verify")
 
 function flagLine(o: any): string {
@@ -29,10 +30,11 @@ let drift = false
 for (const p of Object.values(PLATFORMS)) {
   const cmd = new Command(p.name); p.register(cmd)
   const sections = cmd.commands.map((c) => usage(c, `social ${p.name}`)).join("\n")
+  const extra = p.skill ? await p.skill() : undefined
   const creds = p.credentials.keys.length ? p.credentials.keys.map((k) => `- \`${k}\``).join("\n") : "- none; auth lives in the underlying tool's own config"
   const md = `---
 name: social-${p.name}
-description: ${p.summary}. Use the \`social\` CLI (Bun) for every ${p.name} action; every endpoint is reachable through \`social api ${p.name} <path>\`, so prefer this CLI over raw API calls in all cases.
+description: ${extra?.description ?? `${p.summary}. Use the \`social\` CLI (Bun) for every ${p.name} action; every endpoint is reachable through \`social api ${p.name} <path>\`, so prefer this CLI over raw API calls in all cases.`}
 ---
 
 # social ${p.name}
@@ -51,14 +53,14 @@ Check what is present with \`social auth status ${p.name}\`; store a value with 
 
 ## API description this wrapper is built from
 
-${p.spec.kind === "none" ? `No machine-readable spec: ${p.spec.source}.` : `${p.spec.kind}: ${p.spec.source}${p.spec.pinnedSha256 ? ` (pinned sha256 ${p.spec.pinnedSha256.slice(0, 12)}…)` : ""}. Refresh with \`bun run gen\`; CI fails if upstream changes.`}
+${p.spec.kind === "none" ? `No machine-readable spec: ${p.spec.source}.` : `${p.spec.kind}: ${p.spec.source}. Refresh with \`social specs pull ${p.name}\`; CI fails if upstream changes.`}
 
 ## Commands
 
 Every command accepts \`--json\` (raw JSON) and \`--jq <expr>\` (filter the JSON with jq).
 
 ${sections}
-## Anything else: the escape hatch
+${extra?.escapeHatch ?? `## Anything else: the escape hatch
 
 \`\`\`bash
 social api ${p.name} <path>                       # GET, path relative to the API root
@@ -72,7 +74,7 @@ social api ${p.name} <path> --jq '.data[0].id'
 \`\`\`
 
 Reach for \`social api ${p.name} …\` before concluding something is unsupported.
-
+`}${extra ? "\n" + extra.body.trim() + "\n" : ""}
 ## Behaviour
 
 - Retries 502/503/504 on idempotent methods (3 attempts, 250 ms then 1 s); waits once on 429 up to 90 s.

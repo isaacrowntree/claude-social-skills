@@ -3,6 +3,7 @@ import { Command } from "commander"
 import { dryRun } from "./core/http.ts"
 import { apiCommand } from "./commands/api.ts"
 import { authCommand, doctorCommand } from "./commands/auth.ts"
+import { specsCommand } from "./commands/specs.ts"
 import { PLATFORMS } from "./platforms/index.ts"
 
 const program = new Command("social")
@@ -19,6 +20,7 @@ for (const p of Object.values(PLATFORMS)) {
 program.addCommand(apiCommand(PLATFORMS))
 program.addCommand(authCommand(PLATFORMS))
 program.addCommand(doctorCommand(PLATFORMS))
+program.addCommand(specsCommand())
 
 try {
   await program.parseAsync(process.argv)

@@ -18,7 +18,7 @@ bun run check      # verify-gen, gen-skills --verify, tsc, bun test
 
 ## Adding a platform
 
-Copy the shape of `src/platforms/x/index.ts`: a `Platform` object with `http()`, `register()`, `whoami()` and optionally `auth()`. If the platform publishes an OpenAPI or Discovery document, add it to `scripts/specs.ts` and run `bun run gen --update` to pin it. Register the module in `src/platforms/index.ts`.
+Copy the shape of `src/platforms/x/index.ts`: a `Platform` object with `http()`, `register()`, `whoami()` and optionally `auth()`. If the platform publishes an OpenAPI or Discovery document, add it to `src/core/specs.ts` and run `bun run gen` to pin it (commit `spec-pins.json`). Add the platform's name to `SINGLE_SPEC` there too, and its module gets `ops`/`describe`/`call` for every operation by passing a `Generated` (from `src/core/openapi.ts`) with an authenticated client to `registerGenerated`; see `src/platforms/discord/index.ts` for the smallest example. Register the module in `src/platforms/index.ts`.
 
 ## Before a pull request
 

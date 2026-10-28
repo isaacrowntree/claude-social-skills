@@ -20,11 +20,44 @@ Check what is present with `social auth status bluesky`; store a value with `soc
 
 ## API description this wrapper is built from
 
-lexicon: https://github.com/bluesky-social/atproto/tree/main/lexicons/app/bsky (typed client: @atproto/api). Refresh with `bun run gen`; CI fails if upstream changes.
+lexicon: https://github.com/bluesky-social/atproto/tree/main/lexicons/app/bsky (typed client: @atproto/api). Refresh with `social specs pull bluesky`; CI fails if upstream changes.
 
 ## Commands
 
 Every command accepts `--json` (raw JSON) and `--jq <expr>` (filter the JSON with jq).
+
+### `social bluesky apis`
+
+the bluesky API groups and how many operations each has
+
+### `social bluesky ops [filter]...`
+
+search operations: every word must appear in the id, summary, path, description or field names; best matches first
+
+```
+  --api <name>               only this API group (see `social bluesky apis`)
+```
+
+### `social bluesky describe <op>`
+
+parameters, body, scopes and response shape of one operation
+
+```
+  --depth <n>                how deep to expand nested fields (default 2)
+```
+
+### `social bluesky call <op>`
+
+call any operation by id; --dry-run prints the request instead
+
+```
+  -p, --param <k=v>          path/query/header parameter (default [])
+  -f, --field <k=v>          body field, typed (numbers, booleans, null, JSON literals) (default [])
+  --raw-field <k=v>          body field, always a string (default [])
+  --file <field=path>        file for a multipart part (image=./photo.jpg) or a binary body (default [])
+  --output <file>            save a binary response (PDF, image, feed file) here
+  --input <file>             request body from a JSON file (- for stdin)
+```
 
 ### `social bluesky post <text>`
 

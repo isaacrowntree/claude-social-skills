@@ -10,7 +10,7 @@
  */
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, chmodSync } from "node:fs"
 
 export const CONFIG_DIR = process.env.SOCIAL_CONFIG_DIR ?? join(homedir(), ".config", "social")
 export const ENV_FILE = join(CONFIG_DIR, ".env")
@@ -109,6 +109,8 @@ export function readState<T = Record<string, unknown>>(): T {
 export function writeState(patch: Record<string, unknown>): void {
   mkdirSync(CONFIG_DIR, { recursive: true })
   const next = { ...readState(), ...patch }
-  writeFileSync(STATE_FILE, JSON.stringify(next, null, 2) + "\n")
-  chmodSync(STATE_FILE, 0o600)
+  // Created 0600 from the start and renamed into place: never briefly world-readable, never half-written.
+  const tmp = `${STATE_FILE}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 })
+  renameSync(tmp, STATE_FILE)
 }

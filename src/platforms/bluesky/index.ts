@@ -23,6 +23,7 @@ import type { Platform } from "../../core/platform.ts"
 import { makeHttp, ApiError, type Http } from "../../core/http.ts"
 import * as config from "../../core/config.ts"
 import { emit, note } from "../../core/output.ts"
+import { Generated, registerGenerated } from "../../core/openapi.ts"
 
 const DEFAULT_SERVICE = "https://bsky.social"
 const PUBLIC_APPVIEW = "https://public.api.bsky.app"
@@ -132,6 +133,16 @@ async function facets(h: Http, text: string) {
 const feedLine = (i: any) => `${i.post.uri}  ${i.post.record?.createdAt?.slice(0, 16) ?? ""}  @${i.post.author.handle}${i.reason?.$type?.endsWith("#reasonRepost") ? " (repost)" : ""}: ${(i.post.record?.text ?? "").replace(/\n/g, " ").slice(0, 80)}`
 const profileLine = (d: any) => `@${d.handle} (${d.did})  followers ${d.followersCount ?? 0}  following ${d.followsCount ?? 0}  posts ${d.postsCount ?? 0}\n${d.description ?? ""}`
 
+/**
+ * Every operation in Bluesky's OpenAPI rendering of the lexicons, generated: `social bluesky ops | describe | call` send them
+ * through the same authenticated client as the commands below.
+ */
+export const generated = new Generated({
+  name: "bluesky", indexFile: new URL("./ops.gen.json", import.meta.url).pathname,
+  client: async () => anyHttp(),
+  defaults: async () => { const origin = new URL((await anyHttp()).url("")).origin; return { server: () => origin } },
+})
+
 export const bluesky: Platform = {
   name: "bluesky",
   summary: "Bluesky (AT Protocol): post, reply, delete, timeline, profiles; any XRPC method via `social api bluesky`",
@@ -148,6 +159,7 @@ export const bluesky: Platform = {
     return { did: r.did, handle: r.handle, active: r.active }
   },
   register(cmd: Command) {
+    registerGenerated(cmd, generated)
     // com.atproto.repo.createRecord: https://endpoints.bsky.app/#tag/com.atproto.repo/POST/xrpc/com.atproto.repo.createRecord
     // com.atproto.repo.uploadBlob (raw bytes, content-type = mime): https://endpoints.bsky.app/#tag/com.atproto.repo/POST/xrpc/com.atproto.repo.uploadBlob
     // app.bsky.feed.getPosts (reply root/parent lookup): https://endpoints.bsky.app/#tag/app.bsky.feed/GET/xrpc/app.bsky.feed.getPosts

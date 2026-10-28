@@ -11,3 +11,5 @@ __pycache__/
 .claude/
 *.log
 .DS_Store
+specs/*.graphqls
+src/platforms/*/*.gen.json
