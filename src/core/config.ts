@@ -12,9 +12,11 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, chmodSync } from "node:fs"
 
-export const CONFIG_DIR = process.env.SOCIAL_CONFIG_DIR ?? join(homedir(), ".config", "social")
-export const ENV_FILE = join(CONFIG_DIR, ".env")
-export const STATE_FILE = join(CONFIG_DIR, "state.json")
+// Read per call, not at import: SOCIAL_CONFIG_DIR may change after this module loads (each test file
+// sets its own while bun runs them all in one process; CI's file order exposed the import-time version).
+export function configDir(): string { return process.env.SOCIAL_CONFIG_DIR ?? join(homedir(), ".config", "social") }
+export function envFilePath(): string { return join(configDir(), ".env") }
+export function stateFilePath(): string { return join(configDir(), "state.json") }
 
 function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {}
@@ -32,11 +34,12 @@ function parseEnvFile(text: string): Record<string, string> {
   return out
 }
 
-let envFileCache: Record<string, string> | null = null
+let envFileCache: { path: string; values: Record<string, string> } | null = null
 function envFile(): Record<string, string> {
-  if (envFileCache) return envFileCache
-  envFileCache = existsSync(ENV_FILE) ? parseEnvFile(readFileSync(ENV_FILE, "utf8")) : {}
-  return envFileCache
+  const path = envFilePath()
+  if (envFileCache?.path === path) return envFileCache.values
+  envFileCache = { path, values: existsSync(path) ? parseEnvFile(readFileSync(path, "utf8")) : {} }
+  return envFileCache.values
 }
 
 async function keyringGet(key: string): Promise<string | undefined> {
@@ -84,7 +87,7 @@ export async function require(keys: string[], hint: string): Promise<Record<stri
   }
   if (missing.length) {
     throw new Error(
-      `Missing ${missing.join(", ")}.\n${hint}\nSet them in your environment, in ${ENV_FILE}, or with \`social auth\`.`,
+      `Missing ${missing.join(", ")}.\n${hint}\nSet them in your environment, in ${envFilePath()}, or with \`social auth\`.`,
     )
   }
   return out
@@ -93,24 +96,24 @@ export async function require(keys: string[], hint: string): Promise<Record<stri
 /** Persist a value: keyring first, .env file as the fallback (0600). */
 export async function set(key: string, value: string): Promise<"keyring" | "file"> {
   if (await keyringSet(key, value)) return "keyring"
-  mkdirSync(CONFIG_DIR, { recursive: true })
+  mkdirSync(configDir(), { recursive: true })
   const current = envFile()
   current[key] = value
-  writeFileSync(ENV_FILE, Object.entries(current).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join("\n") + "\n")
-  chmodSync(ENV_FILE, 0o600)
+  writeFileSync(envFilePath(), Object.entries(current).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join("\n") + "\n")
+  chmodSync(envFilePath(), 0o600)
   envFileCache = null
   return "file"
 }
 
 /** Small JSON state (cursors, cached ids, OAuth tokens with expiry). */
 export function readState<T = Record<string, unknown>>(): T {
-  try { return JSON.parse(readFileSync(STATE_FILE, "utf8")) as T } catch { return {} as T }
+  try { return JSON.parse(readFileSync(stateFilePath(), "utf8")) as T } catch { return {} as T }
 }
 export function writeState(patch: Record<string, unknown>): void {
-  mkdirSync(CONFIG_DIR, { recursive: true })
+  mkdirSync(configDir(), { recursive: true })
   const next = { ...readState(), ...patch }
   // Created 0600 from the start and renamed into place: never briefly world-readable, never half-written.
-  const tmp = `${STATE_FILE}.${process.pid}.tmp`
+  const tmp = `${stateFilePath()}.${process.pid}.tmp`
   writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 })
-  renameSync(tmp, STATE_FILE)
+  renameSync(tmp, stateFilePath())
 }

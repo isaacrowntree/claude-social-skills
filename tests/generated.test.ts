@@ -98,7 +98,6 @@ describe("new platforms' auth", () => {
 
   test("Etsy sends the keystring:secret key always, and a Bearer only for operations whose spec lists oauth2", async () => {
     const { generated } = await import("../src/platforms/etsy/index.ts")
-    // Through the config module: it fixes its state path when first imported, possibly by another test file.
     const config = await import("../src/core/config.ts")
     config.writeState({ etsy_tokens: { access_token: "1.etsy", refresh_token: "r", expires_at: Date.now() + 3600_000, refresh_expires_at: Date.now() + 86400_000 } })
     const g = new Generated({ name: "etsy", indexFile: "/nonexistent", client: async (o: any, b: string) => generated.cfg.client(o, b) })

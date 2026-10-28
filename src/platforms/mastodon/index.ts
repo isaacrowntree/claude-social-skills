@@ -62,7 +62,7 @@ export async function registerApp(http: Http, body: Partial<CreateApp> = {}): Pr
 async function login(): Promise<void> {
   const instance = (await config.get("MASTODON_INSTANCE")) ?? (typeof prompt === "function" ? prompt("Mastodon instance host (e.g. mastodon.social):")?.trim() : undefined)
   if (!instance) throw new Error("MASTODON_INSTANCE is required")
-  if (!(await config.get("MASTODON_INSTANCE"))) note(`stored MASTODON_INSTANCE in ${await config.set("MASTODON_INSTANCE", instance) === "keyring" ? "the OS keyring" : config.ENV_FILE}`)
+  if (!(await config.get("MASTODON_INSTANCE"))) note(`stored MASTODON_INSTANCE in ${await config.set("MASTODON_INSTANCE", instance) === "keyring" ? "the OS keyring" : config.envFilePath()}`)
   const http = await publicHttp()
   const apps = (config.readState<any>().mastodon_apps ?? {}) as Record<string, { client_id: string; client_secret: string }>
   let app = apps[instance]
@@ -80,7 +80,7 @@ async function login(): Promise<void> {
   const t = await http.request<Token>({ method: "POST", path: "oauth/token", form })
   const where = await config.set("MASTODON_ACCESS_TOKEN", t.access_token)
   const me = await (await userHttp()).request<CredentialAccount>({ path: "api/v1/accounts/verify_credentials" })
-  note(`Signed in as @${me.acct}@${instance}; token (scopes: ${t.scope}) stored in ${where === "keyring" ? "the OS keyring" : config.ENV_FILE}. Mastodon tokens do not expire.`)
+  note(`Signed in as @${me.acct}@${instance}; token (scopes: ${t.scope}) stored in ${where === "keyring" ? "the OS keyring" : config.envFilePath()}. Mastodon tokens do not expire.`)
 }
 
 // https://docs.joinmastodon.org/methods/media/#v2  200 = ready, 202 = still processing (poll GET /api/v1/media/:id until it is not 206).

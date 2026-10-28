@@ -24,8 +24,7 @@ const reply = (...r: Reply[]) => { replies = r }
 let server: ReturnType<typeof Bun.serve>
 let reddit: typeof import("../src/platforms/reddit/index.ts").reddit
 let ApiError: typeof import("../src/core/http.ts").ApiError
-// bun test runs every file in one process and config.ts fixes CONFIG_DIR at first import, so
-// write state where the config module actually reads it rather than assuming our tmp dir won.
+// Where the config module reads state (it follows SOCIAL_CONFIG_DIR, set above).
 let stateFile: string
 let out = ""
 const origWrite = process.stdout.write.bind(process.stdout)
@@ -45,7 +44,7 @@ beforeAll(async () => {
   process.env.REDDIT_WWW_BASE = base
   ;({ reddit } = await import("../src/platforms/reddit/index.ts"))
   ;({ ApiError } = await import("../src/core/http.ts"))
-  ;({ STATE_FILE: stateFile } = await import("../src/core/config.ts"))
+  stateFile = (await import("../src/core/config.ts")).stateFilePath()
   process.stdout.write = ((s: any) => { out += String(s); return true }) as any
 })
 afterAll(() => { server.stop(true); process.stdout.write = origWrite; rmSync(dir, { recursive: true, force: true }) })

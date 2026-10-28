@@ -10,7 +10,7 @@ export function authCommand(platforms: Record<string, Platform>): Command {
     const accepted = [...p.credentials.keys, ...(p.credentials.optionalKeys ?? [])]
     if (!accepted.includes(key)) throw new Error(`${platform} does not use ${key}; expected one of ${accepted.join(", ")}`)
     const where = await config.set(key, value)
-    process.stderr.write(`stored ${key} in ${where === "keyring" ? "the OS keyring" : config.ENV_FILE}\n`)
+    process.stderr.write(`stored ${key} in ${where === "keyring" ? "the OS keyring" : config.envFilePath()}\n`)
   })
   c.command("login <platform>").description("run the platform's interactive auth flow, where one exists").action(async (platform) => {
     const p = platforms[platform]; if (!p) throw new Error(`unknown platform ${platform}`)
