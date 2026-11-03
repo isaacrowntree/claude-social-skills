@@ -174,6 +174,26 @@ social api email <path> --jq '.data[0].id'
 
 Reach for `social api email …` before concluding something is unsupported.
 
+## Drafts for review, then sending (Gmail)
+
+To let someone check an email before it goes out, build the RFC 5322 message yourself and put it in Drafts: `himalaya -a <account> message add -m drafts -- draft.eml`. Set `In-Reply-To` and `References` from the original's `Message-ID` (`social email read <id> -H Message-ID References`) so it lands in the same thread.
+
+Gmail keeps one copy of a message per `Message-ID`. Sending that same file afterwards (`himalaya message send -- draft.eml`) does not create a separate copy in Sent. Gmail adds the Sent label to the draft already in the mailbox, so one message ends up in both Drafts and Sent. That causes two traps:
+
+- **deleting the draft trashes the sent mail.** `social email delete` moves the message to Trash, so it is delivered but vanishes from Sent.
+- **moving or expunging doesn't clear Drafts.** Moving it from Trash to `sent` brings the Drafts label back, and flagging `\Deleted` and expunging Drafts is ignored.
+
+The fix is to drop only the Draft label, over raw IMAP in Sent (the UIDs are the Sent ids):
+
+```bash
+printf 'a1 SELECT "[Gmail]/Sent Mail"\r\na2 UID STORE <uid>[,<uid>] -X-GM-LABELS (\\Draft)\r\n' | himalaya imap raw -a <account>
+```
+
+- Do that right after sending. If an edit means a new draft, delete the old one before sending, while it is still only a draft.
+- Check with `social email search -f sent 'subject "…"'` and `-f drafts`. If a sent mail is missing, look in Trash (`-f trash`), move it to `sent`, then drop the Draft label as above.
+- `UID FETCH <uid> (X-GM-LABELS)` shows which labels a message has.
+- Never resend because the copy isn't in Sent. Confirm with the recipient or check Trash first, or they get it twice.
+
 ## Behaviour
 
 - Retries 502/503/504 on idempotent methods (3 attempts, 250 ms then 1 s); waits once on 429 up to 90 s.
